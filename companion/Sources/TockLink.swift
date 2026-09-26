@@ -2,6 +2,7 @@
 // and stats every few seconds, and send it commands. The protocol is in firmware/tock/net.h.
 
 import CoreBluetooth
+import CryptoKit
 import Foundation
 
 struct TockStatus: Decodable {
@@ -128,6 +129,7 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
   static let tasksUUID = CBUUID(string: "7a0c0005-4c3f-4d7e-9b6a-70c6f1a0c0de")
   static let messagesUUID = CBUUID(string: "7a0c0006-4c3f-4d7e-9b6a-70c6f1a0c0de")
   static let taskStatsUUID = CBUUID(string: "7a0c0007-4c3f-4d7e-9b6a-70c6f1a0c0de")
+  static let updateUUID = CBUUID(string: "7a0c0008-4c3f-4d7e-9b6a-70c6f1a0c0de")
   static let maxTasks = 8, taskNameMax = 12, maxMessages = 16, messageMax = 28
 
   enum Phase { case bluetoothOff, searching, connecting, pairing, connected }
@@ -141,10 +143,11 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
   @Published var messages: [String] = []
   @Published var taskStats: TaskStats?
   @Published var note = ""  // the last thing that happened, for the user
+  @Published var firmware: FirmwareProgress?  // while a firmware update is on its way
 
   private var central: CBCentralManager!
   private var peripheral: CBPeripheral?
-  private var chStatus, chStats, chCommand, chTasks, chMessages, chTaskStats: CBCharacteristic?
+  private var chStatus, chStats, chCommand, chTasks, chMessages, chTaskStats, chUpdate: CBCharacteristic?
   private var outbox: [(command: String, done: String)] = []
   private var writing = false
   private var poller: Timer?
@@ -293,6 +296,8 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
   func centralManager(_ c: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
     print("tock: disconnected: \(String(describing: error))")
     store?.observe(timer: nil)  // a session in progress ends here, as far as the log can tell
+    if firmware?.stage == .sending { firmwareFinish("Tock went away during the update. It keeps its firmware; try again.") }
+    if firmware?.stage == .installing { firmware?.stage = .restarting }  // it went before we saw "done"
     note = "Tock went away. Looking for it again."
     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.search() }
   }
@@ -306,6 +311,7 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
     chTasks = nil
     chMessages = nil
     chTaskStats = nil
+    chUpdate = nil
     writing = false
     status = nil
   }
@@ -320,6 +326,7 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
     chTasks = nil
     chMessages = nil
     chTaskStats = nil
+    chUpdate = nil
     writing = false
     p.discoverServices([TockLink.service])
   }
@@ -327,7 +334,7 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
   func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
     guard let svc = p.services?.first(where: { $0.uuid == TockLink.service }) else { return }
     p.discoverCharacteristics([TockLink.statusUUID, TockLink.statsUUID, TockLink.commandUUID, TockLink.tasksUUID,
-                               TockLink.messagesUUID, TockLink.taskStatsUUID], for: svc)
+                               TockLink.messagesUUID, TockLink.taskStatsUUID, TockLink.updateUUID], for: svc)
   }
 
   func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor svc: CBService, error: Error?) {
@@ -339,20 +346,50 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
       case TockLink.tasksUUID: chTasks = ch
       case TockLink.messagesUUID: chMessages = ch
       case TockLink.taskStatsUUID: chTaskStats = ch
+      case TockLink.updateUUID: chUpdate = ch
       default: break
       }
     }
-    // Tock has no clock of its own: hand it ours first. This also triggers pairing the first time.
+    // Tock has no clock of its own: hand it ours first, and our time zone, for when its days start.
+    // This also triggers pairing the first time.
     outbox.insert(("time:\(Int(Date().timeIntervalSince1970))", ""), at: 0)
+    outbox.insert(("tz:\(TockLink.posixTimeZone())", ""), at: 1)
     pump()
     poll()
     poller = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.poll() }
   }
 
+  // This Mac's time zone as a POSIX TZ string, "STD-1DST-2,M3.5.0,M10.5.0/3" for Central Europe:
+  // the offsets, and the rules for this year's daylight saving changes if it has them.
+  static func posixTimeZone(_ zone: TimeZone = .current, now: Date = Date()) -> String {
+    func clock(_ a: Int) -> String {
+      "\(a / 3600)" + (a % 3600 == 0 ? "" : String(format: ":%02d", a % 3600 / 60)) + (a % 60 == 0 ? "" : String(format: ":%02d", a % 60))
+    }
+    func offset(_ seconds: Int) -> String { (seconds > 0 ? "-" : "") + clock(abs(seconds)) }  // POSIX counts west as positive
+    guard let t1 = zone.nextDaylightSavingTimeTransition(after: now),
+          let t2 = zone.nextDaylightSavingTimeTransition(after: t1) else {
+      return "STD" + offset(zone.secondsFromGMT(for: now))
+    }
+    let a = zone.secondsFromGMT(for: t1), b = zone.secondsFromGMT(for: t2)  // just after each change
+    let std = min(a, b), dst = max(a, b)
+    let (start, end) = a == dst ? (t1, t2) : (t2, t1)
+    // a change as "M<month>.<week>.<weekday>/<time>", the time on the clock just before it
+    func rule(_ t: Date, clockOffset: Int) -> String {
+      var cal = Calendar(identifier: .gregorian)
+      cal.timeZone = TimeZone(secondsFromGMT: clockOffset)!
+      let c = cal.dateComponents([.month, .day, .weekday, .hour, .minute, .second], from: t)
+      let days = cal.range(of: .day, in: .month, for: t)!.count
+      let week = c.day! + 7 > days ? 5 : (c.day! - 1) / 7 + 1
+      let secs = c.hour! * 3600 + c.minute! * 60 + c.second!
+      return "M\(c.month!).\(week).\(c.weekday! - 1)" + (secs == 7200 ? "" : "/" + clock(secs))
+    }
+    return "STD\(offset(std))DST\(offset(dst)),\(rule(start, clockOffset: std)),\(rule(end, clockOffset: dst))"
+  }
+
   // MARK: reading
 
   private func poll() {
-    guard let p = peripheral else { return }
+    guard let p = peripheral, firmware == nil || firmware?.stage == .restarting else { return }  // the update gets the link
     if let s = chStatus { p.readValue(for: s) }
     if let s = chStats { p.readValue(for: s) }
     // the lists: not while a change is on its way, or the old list would flash back
@@ -374,10 +411,15 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
       return
     }
     guard let data = ch.value else { return }
+    if ch.uuid == TockLink.updateUUID {
+      firmwareReport(data)
+      return
+    }
     if ch.uuid == TockLink.statusUUID {
       status = try? JSONDecoder().decode(TockStatus.self, from: data)
       statusAt = Date()
       if let s = status {
+        if firmware?.stage == .restarting { firmwareBack(s.version) }
         store?.observe(timer: s.timer)
         if let day = s.goalDay, let m = s.goalMin, day == stats?.today { store?.save(goal: m, day: day) }
       }
@@ -426,4 +468,165 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
     }
     pump()
   }
+
+  // MARK: firmware updates (firmware/tock/update.h)
+  //
+  // "update:<size> <sha256>" makes room on the FIRE; then the image goes in chunks (u32 offset,
+  // u32 FNV-1a of the bytes, the bytes) without waiting for each, and a read of UPDATE every window says how far the FIRE got:
+  // anything it missed is sent again from there. "update:end" has it check and install the image.
+
+  private var fwImage = Data()
+  private var fwSent = 0, fwGot = 0, fwSentAtRead = 0
+  private var fwReading = false, fwAccepted = false
+  private var fwTarget = "", fwFrom = ""
+  private var fwStarted = Date(), fwMoved = Date()
+  private var fwWatch: Timer?
+  private var fwDone: ((String?) -> Void)?
+  private static let fwWindow = 12 * 1024  // the FIRE buffers 16 KB on its way to flash
+
+  var canUpdateFirmware: Bool { phase == .connected && chUpdate != nil }
+
+  // Why the FIRE can't take an update right now, or nil.
+  var firmwareBlocked: String? {
+    if phase != .connected { return "The FIRE isn't connected." }
+    if chUpdate == nil { return "This FIRE's firmware predates updates from the Mac: flash it once over USB (firmware/flash.sh)." }
+    if let t = status?.timer, t.state == "running" || t.state == "paused" { return "Tock's Timer is going. Update once it's done." }
+    return nil
+  }
+
+  // Send `image` (firmware `version`) to the FIRE; `done` gets nil once it runs the new one, or why not.
+  func updateFirmware(_ image: Data, version: String, done: @escaping (String?) -> Void) {
+    if let why = firmwareBlocked { return done(why) }
+    fwImage = image
+    fwSent = 0
+    fwGot = 0
+    fwReading = false
+    fwAccepted = false
+    fwTarget = version
+    fwFrom = status?.version ?? ""
+    fwStarted = Date()
+    fwMoved = Date()
+    fwDone = done
+    firmware = FirmwareProgress(stage: .sending, fraction: 0)
+    let hash = SHA256.hash(data: image).map { String(format: "%02x", $0) }.joined()
+    print("tock: firmware \(version), \(image.count) bytes")
+    send("update:\(image.count) \(hash)", done: "")
+    fwWatch?.invalidate()
+    fwWatch = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.firmwareTick() }
+  }
+
+  private func firmwareTick() {
+    guard let f = firmware else { return }
+    let quiet = Date().timeIntervalSince(fwMoved)
+    switch f.stage {
+    case .sending, .installing:
+      if quiet > 20 {
+        send("update:cancel", done: "")
+        return firmwareFinish("The FIRE stopped taking the update. It keeps its firmware; try again.")
+      }
+      firmwareRead()
+    case .restarting:
+      if quiet > 90 { firmwareFinish("The FIRE hasn't come back after the update. Check that it's on and Bluetooth is too.") }
+    }
+  }
+
+  private func firmwareRead() {
+    guard !fwReading, let p = peripheral, let ch = chUpdate, outbox.isEmpty else { return }
+    fwReading = true
+    fwSentAtRead = fwSent
+    p.readValue(for: ch)
+  }
+
+  // u8 state (0 idle, 1 receiving, 2 installing, 3 done, 4 failed), u8 error, u32 got, u32 size, u32 written
+  private func firmwareReport(_ d: Data) {
+    fwReading = false
+    let b = [UInt8](d)
+    guard b.count >= 14, firmware != nil else { return }
+    let u32 = { (o: Int) in Int(b[o]) | Int(b[o + 1]) << 8 | Int(b[o + 2]) << 16 | Int(b[o + 3]) << 24 }
+    let state = b[0], got = u32(2), size = u32(6), written = u32(10)
+    let ours = size == fwImage.count
+    switch state {
+    case 1 where ours && firmware?.stage == .sending:
+      fwAccepted = true
+      if got != fwGot { fwMoved = Date() }
+      fwGot = got
+      if got < fwSentAtRead {  // it missed some: again from there
+        print("tock: firmware: the FIRE has \(got), \(fwSentAtRead - got) bytes again")
+        fwSent = got
+      }
+      fwSent = max(fwSent, got)
+      firmware = FirmwareProgress(stage: .sending, fraction: Double(got) / Double(fwImage.count))
+      if got == fwImage.count {
+        send("update:end", done: "")
+        firmware = FirmwareProgress(stage: .installing, fraction: 0)
+      } else {
+        firmwarePump()
+      }
+    case 2 where ours:
+      fwMoved = Date()
+      firmware = FirmwareProgress(stage: .installing, fraction: Double(written) / Double(max(1, size)))
+    case 3 where ours:
+      fwMoved = Date()
+      firmware = FirmwareProgress(stage: .restarting, fraction: 1)
+      note = "The FIRE is restarting with \(fwTarget)."
+    case 4 where fwAccepted || Date().timeIntervalSince(fwStarted) > 5:
+      let why = ["", "The firmware is too big for the FIRE.", "The FIRE ran out of memory for it.",
+                 "Some of it got lost on the way.", "It didn't check out on the FIRE.", "The FIRE couldn't write it.",
+                 "The FIRE waited too long for it.", "It was cancelled."]
+      firmwareFinish("The update didn't go through: \(why[min(Int(b[1]), why.count - 1)]) The FIRE keeps its firmware.")
+    default:
+      break  // not started yet: the next tick reads again
+    }
+  }
+
+  // As many chunks as the link takes, up to a window ahead of what the FIRE confirmed.
+  private func firmwarePump() {
+    guard firmware?.stage == .sending, fwAccepted, let p = peripheral, let ch = chUpdate else { return }
+    let size = min(512, p.maximumWriteValueLength(for: .withoutResponse)) - 8
+    while fwSent < fwImage.count && fwSent - fwGot < TockLink.fwWindow && p.canSendWriteWithoutResponse {
+      let n = min(size, fwImage.count - fwSent)
+      let bytes = fwImage.subdata(in: fwSent..<fwSent + n)
+      var packet = Data(capacity: n + 8)
+      withUnsafeBytes(of: UInt32(fwSent).littleEndian) { packet.append(contentsOf: $0) }
+      withUnsafeBytes(of: TockLink.fnv1a(bytes).littleEndian) { packet.append(contentsOf: $0) }
+      packet.append(bytes)
+      p.writeValue(packet, for: ch, type: .withoutResponse)
+      fwSent += n
+    }
+    if fwSent == fwImage.count || fwSent - fwGot >= TockLink.fwWindow { firmwareRead() }
+  }
+
+  static func fnv1a(_ d: Data) -> UInt32 {
+    d.reduce(2166136261 as UInt32) { ($0 ^ UInt32($1)) &* 16777619 }
+  }
+
+  func peripheralIsReady(toSendWriteWithoutResponse p: CBPeripheral) {
+    firmwarePump()
+  }
+
+  // Back after the restart: the new version, or the old one if the new one didn't make it.
+  private func firmwareBack(_ version: String?) {
+    if version == fwTarget {
+      firmwareFinish(nil)
+    } else if Date().timeIntervalSince(fwMoved) > 45 {
+      firmwareFinish("The FIRE went back to \(version ?? fwFrom): the new firmware didn't start properly.")
+    }
+  }
+
+  private func firmwareFinish(_ error: String?) {
+    print("tock: firmware update \(error == nil ? "done" : "failed") after \(Int(Date().timeIntervalSince(fwStarted))) s")
+    fwWatch?.invalidate()
+    fwWatch = nil
+    fwImage = Data()
+    firmware = nil
+    let done = fwDone
+    fwDone = nil
+    done?(error)
+  }
+}
+
+struct FirmwareProgress: Equatable {
+  enum Stage { case sending, installing, restarting }
+  var stage: Stage
+  var fraction: Double
 }

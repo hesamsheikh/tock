@@ -36,7 +36,7 @@
 #include "mic.h"
 #include "talk.h"
 #include "settings.h"
-#if __has_include("secrets.h")
+#if __has_include("secrets.h") && !defined(TOCK_RELEASE)  // a release is for everyone: none of yours in it
 #include "secrets.h"
 #endif
 #ifndef TOCK_TZ
@@ -56,6 +56,11 @@ App* apps[5];
 Launcher* launcher;
 Screen* active = nullptr;
 SettingsSheet sheet;
+
+// A firmware from the Mac starts on probation (update.h): loop() confirms it after a while, and
+// until then a crash sends the bootloader back to the previous one.
+extern "C" bool verifyRollbackLater() { return true; }
+constexpr uint32_t CONFIRM_AFTER_MS = 15000;
 
 bool booting = true;
 uint32_t bootAt = 0, lastFrame = 0;
@@ -360,6 +365,9 @@ void loop() {
       booting = false;
       switchTo(launcher, now);
     }
+  } else if (update::showing(now)) {
+    if (active != launcher) goHome(now);  // lets Talk and the rest let go of their memory
+    update::draw(gfx, now);
   } else {
     sys.sound.hushed = active->quiet();
     pollButtons(now);
@@ -375,6 +383,9 @@ void loop() {
   canvas.pushSprite(0, 0);
   sys.leds.show();
   net::tick(now);
+  update::tick(now);
+  static bool confirmed = false;
+  if (!confirmed && now - bootAt > CONFIRM_AFTER_MS) confirmed = true, update::confirm();
 
   // about 30 fps
   const uint32_t spent = millis() - now;

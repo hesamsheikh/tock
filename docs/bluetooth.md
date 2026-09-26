@@ -14,6 +14,7 @@ Service `7a0c0001-4c3f-4d7e-9b6a-70c6f1a0c0de`:
 | `0005` | TASKS | read | text: `cur:<id>`, then one `id\|color\|name` line per task |
 | `0006` | MESSAGES | read | text: the screensaver's lines, one per line |
 | `0007` | TASKSTATS | read | binary, per task, the last 14 days (below) |
+| `0008` | UPDATE | write without response, read | firmware updates (below) |
 
 All suffixes share the prefix `7a0c`, then the suffix, then `-4c3f-4d7e-9b6a-70c6f1a0c0de`.
 
@@ -22,12 +23,16 @@ All suffixes share the prefix `7a0c`, then the suffix, then `-4c3f-4d7e-9b6a-70c
 | | |
 | --- | --- |
 | `time:<epoch>` | set the clock (UTC seconds) |
+| `tz:<POSIX TZ>` | the time zone, like `STD-1DST-2,M3.5.0,M10.5.0/3`: when days start (kept on the FIRE) |
 | `key:<openai key>` | store the API key for Talk (empty removes it) |
 | `model:<name>` | the model Talk uses |
 | `wifi:<ssid><tab><password>` | save and join a network |
 | `tasks:<lines>` | replace the task list: `id\|color\|name` per line, id 0 for a new task |
 | `msgs:<lines>` | replace the screensaver's lines (none = the defaults) |
 | `goal:<hours>`, `goalmin:<minutes>` | today's goal, 15 minutes to 16 hours |
+| `update:<size> <sha256 hex>` | start a firmware update |
+| `update:end` | all of it sent: check it and restart into it |
+| `update:cancel` | stop an update; the FIRE keeps its firmware |
 
 ## Binary formats
 
@@ -39,3 +44,24 @@ the FIRE's calendar, -1 while the clock is unknown), `u16` count, then per day, 
 
 TASKSTATS: `u8` version (1), `i32` today, `u8` count, then per task: `u8` id, then 14 x `u16`
 focused minutes, oldest first. Untagged time is the day's total minus these.
+
+UPDATE, written: `u32` offset, `u32` FNV-1a of the bytes, then the bytes (up to 504), in order.
+The FIRE drops a chunk that isn't at the next offset, or doesn't match its FNV-1a, or doesn't fit
+in its 16 KB buffer yet; the sender reads UPDATE now and then and goes back to `got`.
+
+UPDATE, read: `u8` state (0 idle, 1 receiving, 2 checking, 3 installed and restarting, 4 failed),
+`u8` error (1 too big, 2 no memory, 3 wrong size, 4 wrong hash, 5 flash, 6 timed out, 7
+cancelled), `u32` got (bytes received), `u32` size, `u32` written (bytes in flash).
+
+## Firmware updates
+
+1. `update:<size> <sha256>` on COMMAND. The FIRE shows the update screen and starts writing to
+   its other app partition.
+2. The image in chunks on UPDATE, without waiting for each: at most 12 KB past the last `got`
+   read back, which the FIRE's buffer always has room for.
+3. `update:end` once `got` is the size. When all of it is in flash, the FIRE checks the SHA-256,
+   switches to the new firmware and restarts (state 3).
+4. The new firmware runs on probation: if it crashes or is reset in its first 15 seconds, the
+   bootloader goes back to the old one. The sender knows it worked when STATUS shows the new
+   `version`.
+

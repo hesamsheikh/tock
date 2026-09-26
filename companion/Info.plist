@@ -13,6 +13,7 @@
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
+  <key>TockReleases</key><string>https://api.github.com/repos/hesamsheikh/tock/releases/latest</string>
   <key>NSBluetoothAlwaysUsageDescription</key>
   <string>Tock uses Bluetooth to pair with your M5Stack FIRE, show your focus stats, and send it settings.</string>
 </dict>

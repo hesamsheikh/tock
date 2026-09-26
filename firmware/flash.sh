@@ -1,6 +1,8 @@
 #!/bin/sh
 # Build Tock and flash it to the FIRE over USB.
 # Usage: firmware/flash.sh [serial-port]   (defaults to the first /dev/cu.usbserial-*)
+#        firmware/flash.sh --build-only    just build, into firmware/build/
+#        firmware/flash.sh --release       build for a release: like --build-only, without secrets.h
 #
 # The build is pinned in tock/sketch.yaml (ESP32 core 2.1.4 and exact library versions);
 # arduino-cli installs that set on first run, apart from any Arduino IDE setup.
@@ -8,8 +10,13 @@ set -e
 cd "$(dirname "$0")"
 
 CLI="${ARDUINO_CLI:-$(command -v arduino-cli || echo "/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli")}"
-PORT="${1:-$(ls /dev/cu.usbserial-* 2>/dev/null | head -1)}"
-[ -n "$PORT" ] || { echo "No /dev/cu.usbserial-* port found. Is the FIRE plugged in?" >&2; exit 1; }
+BUILD_ONLY=; FLAGS=
+[ "$1" = "--build-only" ] && BUILD_ONLY=1
+[ "$1" = "--release" ] && BUILD_ONLY=1 && FLAGS=-DTOCK_RELEASE
+if [ -z "$BUILD_ONLY" ]; then
+  PORT="${1:-$(ls /dev/cu.usbserial-* 2>/dev/null | head -1)}"
+  [ -n "$PORT" ] || { echo "No /dev/cu.usbserial-* port found. Is the FIRE plugged in?" >&2; exit 1; }
+fi
 
 # Core 2.1.4 ships Intel-only ctags and esptool binaries. On Apple silicon without Rosetta:
 # skip ctags (Tock declares every function before use), and use a native esptool instead.
@@ -27,7 +34,9 @@ if [ -f ../lab/tock.js ] && command -v node >/dev/null; then node gen-sprites.js
   --build-property "tools.ctags.pattern=/usr/bin/true" \
   --build-property "tools.esptool_py.path=$(dirname "$ESPTOOL")" \
   --build-property "tools.esptool_py.cmd=$(basename "$ESPTOOL")" \
+  --build-property "compiler.cpp.extra_flags=$FLAGS" \
   --output-dir build tock
+[ -n "$BUILD_ONLY" ] && exit 0
 
 PLATFORM="$("$CLI" compile --profile fire --show-properties tock 2>/dev/null | sed -n 's/^runtime.platform.path=//p')"
 "$ESPTOOL" --chip esp32 --port "$PORT" --baud 1500000 write-flash -z \

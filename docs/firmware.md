@@ -15,6 +15,7 @@ Adafruit NeoPixel for the LEDs.
 | `timer.h`, `stats.h`, `talk.h`, `saver.h`, `settings.h` | the apps |
 | `tasks.h` | task groups and the screensaver's lines |
 | `net.h` | Wi-Fi, and the Bluetooth service the Mac app talks to ([protocol](bluetooth.md)) |
+| `update.h` | firmware updates from the Mac app, and their screen |
 | `power.h` | hold-to-turn-off and hold-to-turn-on with the IP5306 power chip |
 | `mic.h`, `voice.h` | the microphone and the speaker for Talk |
 | `ca.h` | root certificates for api.openai.com |
@@ -22,9 +23,14 @@ Adafruit NeoPixel for the LEDs.
 ## Build and flash
 
     firmware/flash.sh [serial-port]
+    firmware/flash.sh --build-only     # just build, into firmware/build/
+    firmware/flash.sh --release        # the same, without secrets.h (release.sh uses this)
 
 See [Getting started](getting-started.md) for what it needs. `ARDUINO_CLI` overrides where the
 script looks for `arduino-cli`.
+
+The version is `TOCK_VERSION` in `system.h`. Once a FIRE runs 0.1.0 or later, new versions reach
+it from the Mac app over Bluetooth ([Releasing](releasing.md)).
 
 ## Serial debug
 

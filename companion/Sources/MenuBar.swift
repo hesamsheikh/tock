@@ -128,6 +128,7 @@ final class Beat: ObservableObject {
 
 struct TodayPanel: View {
   @ObservedObject var link: TockLink
+  @ObservedObject var updater: Updater
   @Environment(\.colorScheme) private var scheme
   @Environment(\.openWindow) private var openWindow
   @State private var changingGoal = false
@@ -135,7 +136,7 @@ struct TodayPanel: View {
   @FocusState private var typingGoal: Bool
 
   var body: some View {
-    let p = Palette.of(scheme)
+    let p = Palette.glass(scheme)
     VStack(alignment: .leading, spacing: 14) {
       HStack(alignment: .bottom, spacing: 8) {
         TimelineView(.periodic(from: .now, by: 1)) { tl in
@@ -165,6 +166,19 @@ struct TodayPanel: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 18)
       }
+      if updater.busy && updater.step != .checking {
+        UpdateProgress(updater: updater, link: link, p: p, width: 268).padding(10).glassCard()
+      } else if let r = updater.latest, updater.available {
+        HStack {
+          PixelText(text: "\(r.version) IS OUT", scale: 2, color: p.body)
+          Spacer()
+          GlassButton(label: "UPDATE", p: p) { Task { await updater.update() } }
+        }
+        .padding(.leading, 10).padding(.trailing, 6).padding(.vertical, 6)
+        .glassCard()
+        .help("Updates \(updater.what)")
+        if !updater.message.isEmpty { Text(updater.message).font(.system(size: 11)).foregroundStyle(.secondary) }
+      }
       Divider().opacity(0.5)
       HStack {
         GlassButton(label: "SETTINGS", p: p) {
@@ -178,7 +192,9 @@ struct TodayPanel: View {
     }
     .padding(16)
     .frame(width: 300)
-    .background(.ultraThinMaterial)
+    // no background of its own: the menu bar's glass shows through. And exactly as tall as what's
+    // in it, so the window follows when something comes or goes while it's open
+    .fixedSize(horizontal: false, vertical: true)
   }
 
   // "2.5", "2,5", "2:30" or "90m" (minutes), from 15 minutes to 16 hours.
@@ -227,7 +243,7 @@ struct TodayPanel: View {
             .onSubmit { setCustomGoal() }
             .padding(.horizontal, 8)
             .frame(height: 26)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.1)))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(typingGoal ? p.body : .clear, lineWidth: 1))
           PixelText(text: "HOURS", scale: 2, color: p.grey)
           GlassButton(label: "SET", p: p) { setCustomGoal() }
@@ -258,7 +274,7 @@ struct GoalRing: View {
 
   var body: some View {
     ZStack {
-      Circle().stroke(Color.primary.opacity(0.08), lineWidth: width)
+      Circle().stroke(Color.primary.opacity(0.15), lineWidth: width)
       ForEach(Array(arcs.enumerated()), id: \.offset) { _, arc in
         Circle()
           .trim(from: arc.from, to: arc.to)
@@ -300,7 +316,7 @@ struct GoalChip: View {
     Button(action: action) {
       PixelText(text: "\(hours)H", scale: 2, color: current ? Color(hex: 0x0b0a09) : hover ? p.ink : p.grey)
         .frame(width: 30, height: 26)
-        .background(RoundedRectangle(cornerRadius: 6).fill(current ? p.body : Color.primary.opacity(hover ? 0.12 : 0.06)))
+        .background(RoundedRectangle(cornerRadius: 6).fill(current ? p.body : Color.primary.opacity(hover ? 0.18 : 0.1)))
         .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
@@ -324,7 +340,7 @@ struct TimerCard: View {
       let left = max(0, timer.left - (running ? Int(tl.date.timeIntervalSince(readAt)) : 0))
       VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 8) {
-          Circle().fill(timer.state == "ready" ? Color.primary.opacity(0.25) : color).frame(width: 8, height: 8)
+          Circle().fill(timer.state == "ready" ? Color.primary.opacity(0.45) : color).frame(width: 8, height: 8)
           PixelText(text: label(task), scale: 2, color: timer.state == "ready" ? p.grey : p.ink)
           Spacer()
           if timer.state != "ready" && timer.state != "waiting" {
@@ -334,7 +350,7 @@ struct TimerCard: View {
         if timer.state == "running" || timer.state == "paused" {
           GeometryReader { g in
             ZStack(alignment: .leading) {
-              Capsule().fill(Color.primary.opacity(0.08))
+              Capsule().fill(Color.primary.opacity(0.15))
               Capsule().fill(color.opacity(timer.state == "paused" ? 0.5 : 1))
                 .frame(width: g.size.width * CGFloat(timer.total > 0 ? Double(timer.total - left) / Double(timer.total) : 0))
             }
@@ -401,7 +417,7 @@ struct MiniHeatmap: View {
             let i = day - startIndex
             let minutes = i >= 0 && i < stats.days.count ? stats.days[i].minutes : 0
             let rect = CGRect(x: CGFloat(c) * pitch + 2, y: CGFloat(r) * pitch + 2, width: cell, height: cell)
-            ctx.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(minutes > 0 ? p.heat(minutes) : Color.primary.opacity(0.07)))
+            ctx.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(minutes > 0 ? p.heat(minutes) : Color.primary.opacity(0.13)))
             if day == stats.today {
               ctx.stroke(Path(roundedRect: rect.insetBy(dx: -1.5, dy: -1.5), cornerRadius: 3), with: .color(p.ink.opacity(0.8)), lineWidth: 1.5)
             }
@@ -425,7 +441,7 @@ struct GlassButton: View {
       PixelText(text: label, scale: 2, color: hover ? p.ink : p.grey)
         .padding(.horizontal, 10)
         .frame(height: 26)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(hover ? 0.1 : 0.05)))
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(hover ? 0.16 : 0.09)))
         .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
@@ -437,7 +453,7 @@ struct GlassButton: View {
 extension View {
   // A pane of frosted glass on the glass: a faint fill and a hairline edge.
   func glassCard() -> some View {
-    background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
-      .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+    background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.08)))
+      .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.14), lineWidth: 1))
   }
 }

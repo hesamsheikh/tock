@@ -73,7 +73,8 @@ inline uint32_t keyOffAt = 0;  // when to hand the key back to the chip after a 
 // Call right after M5.begin(), before anything lights the screen.
 inline void begin() {
   writeReg(SYS_CTL1, readReg(SYS_CTL1) | CTL1_OFF_BY_LONG_PRESS | CTL1_LIGHT_BY_DOUBLE);
-  if (onUsb()) {
+  // on USB, or restarting itself (after an update): no key press to wait for
+  if (onUsb() || esp_reset_reason() == ESP_RST_SW) {
     setKeyOff(true);
     return;
   }

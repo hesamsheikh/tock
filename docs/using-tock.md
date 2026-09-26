@@ -55,3 +55,6 @@ the Timer is doing, what you worked on, and the last 16 weeks.
 The Settings window (from the panel, or open the app again) has Tasks, Voice, Wi-Fi, Saver (the
 screensaver's lines) and Mac (open at login, the log). The Mac keeps its own log of your focus in
 SQLite, at `~/Library/Application Support/Tock/tock.sqlite`, whenever the FIRE is in range.
+
+When a new version is out, the panel shows it with an UPDATE button: that updates the FIRE over
+Bluetooth, then the app. The FIRE shows its own progress while it takes the new firmware.

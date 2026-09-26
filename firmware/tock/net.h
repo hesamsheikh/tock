@@ -9,13 +9,16 @@
 //   STATUS     read   JSON: name, battery, clock, Wi-Fi, whether an API key is set (never the key),
 //                     the day the daily goal was last set, and what the Timer is doing
 //   STATS      read   binary focus log for the heatmap, see statsBlob()
-//   COMMAND    write  "time:<epoch>" "key:<openai key>" "model:<name>" "wifi:<ssid>\t<password>"
+//   COMMAND    write  "time:<epoch>" "tz:<POSIX TZ>" "key:<openai key>" "model:<name>" "wifi:<ssid>\t<password>"
 //                     "tasks:<lines id|color|name>" (the whole list; id 0 = new)
 //                     "msgs:<lines>" (the screensaver's lines; empty = the defaults)
 //                     "goal:<hours>" "goalmin:<minutes>" (today's goal, 15 minutes to 16 hours)
+//                     "update:<size> <sha256>" "update:end" "update:cancel" (new firmware, update.h)
 //   TASKS      read   text: "cur:<current id>", then a line "id|color|name" per task
 //   MESSAGES   read   text: the screensaver's lines
 //   TASKSTATS  read   binary per-task minutes for the last 14 days, see taskStatsBlob()
+//   UPDATE     write  firmware chunks (u32 offset + bytes, without response)
+//              read   how the update is going, see update::report()
 //
 // Serial debug: w = Wi-Fi scan, l = Bluetooth scan, W<ssid>\t<password>\n = save a network.
 
@@ -24,6 +27,7 @@
 #include <WiFi.h>
 #include "system.h"
 #include "tasks.h"
+#include "update.h"
 
 #define TOCK_BLE_SERVICE "7a0c0001-4c3f-4d7e-9b6a-70c6f1a0c0de"
 #define TOCK_BLE_STATUS "7a0c0002-4c3f-4d7e-9b6a-70c6f1a0c0de"
@@ -32,6 +36,7 @@
 #define TOCK_BLE_TASKS "7a0c0005-4c3f-4d7e-9b6a-70c6f1a0c0de"
 #define TOCK_BLE_MESSAGES "7a0c0006-4c3f-4d7e-9b6a-70c6f1a0c0de"
 #define TOCK_BLE_TASKSTATS "7a0c0007-4c3f-4d7e-9b6a-70c6f1a0c0de"
+#define TOCK_BLE_UPDATE "7a0c0008-4c3f-4d7e-9b6a-70c6f1a0c0de"
 
 constexpr const char* DEFAULT_AI_MODEL = "gpt-realtime-2.1";
 constexpr const char* LIVE_BACKEND = "gpt-5.6-terra";  // the Responses model GPT-Live hands the thinking to
@@ -42,7 +47,8 @@ namespace net {
 
 enum WState { W_OFF, W_NO_SETUP, W_CONNECTING, W_ONLINE, W_FAILED };
 
-inline const char* tz = "UTC0";  // replaced by TOCK_TZ in begin()
+inline const char* tz = "UTC0";  // replaced in begin(): the Mac's time zone, or TOCK_TZ until it sends one
+inline String tzSaved;
 inline WState wstate = W_OFF;
 inline uint32_t wifiSince = 0;
 
@@ -87,6 +93,17 @@ inline void saveNetwork(const char* ssid, const char* pass, uint32_t now) {
   wifiConnect(now);
 }
 
+// The time zone, as a POSIX TZ string ("STD-1DST-2,M3.5.0,M10.5.0/3"): the Mac sends its own on
+// every connection, and it's kept for the days without the Mac.
+inline void setTimezone(const char* posix, bool save = true) {
+  if (!*posix || (tz == tzSaved.c_str() && tzSaved == posix)) return;
+  tzSaved = posix;
+  tz = tzSaved.c_str();
+  if (save) sys.prefs.raw().putString("sys.tz", posix);
+  setenv("TZ", tz, 1);
+  tzset();
+}
+
 // ---------- the AI key and model, set from the Mac ----------
 
 inline String aiKey() { return sys.prefs.raw().getString("ai.key", ""); }
@@ -104,7 +121,7 @@ inline volatile bool commandPending = false;  // written by the Bluetooth task, 
 inline volatile uint32_t securedAt = 0;       // when a Mac's link was last encrypted (Bluetooth task)
 // Bumped whenever the characteristics change: a paired Mac caches them, so after an update Tock
 // tells it once to look again (a Service Changed indication).
-constexpr int GATT_LAYOUT = 2;
+constexpr int GATT_LAYOUT = 3;
 inline NimBLECharacteristic *chStatus = nullptr, *chStats = nullptr, *chTasks = nullptr, *chMessages = nullptr,
                            *chTaskStats = nullptr;
 
@@ -147,8 +164,21 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
   }
 };
 
+// Firmware chunks go straight into the image in PSRAM; a read reports how far it got, fresh.
+class UpdateCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo&) override {
+    const NimBLEAttValue v = c->getValue();
+    update::chunk(v.data(), v.length());
+  }
+  void onRead(NimBLECharacteristic* c, NimBLEConnInfo&) override {
+    uint8_t r[14];
+    c->setValue(r, update::report(r));
+  }
+};
+
 inline ServerCallbacks serverCallbacks;
 inline CommandCallbacks commandCallbacks;
+inline UpdateCallbacks updateCallbacks;
 
 // The stack starts on first use (it takes RAM) and then stays up; "off" stops advertising.
 inline void ensureStack() {
@@ -182,6 +212,9 @@ inline void setBluetooth(bool on) {
       chTasks = svc->createCharacteristic(TOCK_BLE_TASKS, secureRead, 512);
       chMessages = svc->createCharacteristic(TOCK_BLE_MESSAGES, secureRead, 512);
       chTaskStats = svc->createCharacteristic(TOCK_BLE_TASKSTATS, secureRead, 512);
+      svc->createCharacteristic(TOCK_BLE_UPDATE, secureRead | NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::WRITE |
+                                                   NIMBLE_PROPERTY::WRITE_ENC | NIMBLE_PROPERTY::WRITE_AUTHEN, 512)
+        ->setCallbacks(&updateCallbacks);
       svc->start();
       NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
       adv->setName(btName);
@@ -287,6 +320,8 @@ inline void publish() {
 inline void runCommand(char* c, uint32_t now) {
   if (!strncmp(c, "time:", 5)) {
     clockd::setEpoch((time_t)atoll(c + 5));
+  } else if (!strncmp(c, "tz:", 3)) {
+    setTimezone(c + 3);
   } else if (!strncmp(c, "key:", 4)) {
     sys.prefs.raw().putString("ai.key", c + 4);
   } else if (!strncmp(c, "model:", 6)) {
@@ -299,6 +334,18 @@ inline void runCommand(char* c, uint32_t now) {
     setGoalMinutes(atoi(c + 8));
   } else if (!strncmp(c, "msgs:", 5)) {
     messages.setAll(c + 5);
+  } else if (!strcmp(c, "update:end")) {
+    update::finish(now);
+  } else if (!strcmp(c, "update:cancel")) {
+    update::cancel(now);
+  } else if (!strncmp(c, "update:", 7)) {
+    update::start(c + 7, now);
+    // the fast lane for it: the biggest packets the radio takes, and a connection event every 15 ms
+    if (update::state == update::RECEIVING)
+      for (uint16_t h : NimBLEDevice::getServer()->getPeerDevices()) {
+        NimBLEDevice::getServer()->setDataLen(h, 251);
+        NimBLEDevice::getServer()->updateConnParams(h, 12, 12, 0, 400);
+      }
   } else if (!strncmp(c, "wifi:", 5)) {
     if (char* tab = strchr(c + 5, '\t')) {
       *tab = 0;
@@ -311,7 +358,7 @@ inline void runCommand(char* c, uint32_t now) {
 // ---------- setup and upkeep ----------
 
 inline void begin(const char* timezone, uint32_t now) {
-  tz = timezone;
+  setTimezone(sys.prefs.raw().getString("sys.tz", timezone).c_str(), false);
   // why a connection attempt failed (201 no network found, 15/202/204 password or security, 2/4 timeouts)
   WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t info) {
     Serial.printf("wifi: disconnected, reason %d\n", info.wifi_sta_disconnected.reason);

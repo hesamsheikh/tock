@@ -7,8 +7,13 @@ cd "$(dirname "$0")"
 APP=build/Tock.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-swiftc -O -swift-version 5 -parse-as-library -target "$(uname -m)-apple-macos15.0" \
-  Sources/*.swift -o "$APP/Contents/MacOS/Tock"
+# for Apple silicon and Intel both
+for arch in arm64 x86_64; do
+  swiftc -O -swift-version 5 -parse-as-library -target "$arch-apple-macos15.0" \
+    Sources/*.swift -o "build/Tock-$arch"
+done
+lipo -create build/Tock-arm64 build/Tock-x86_64 -output "$APP/Contents/MacOS/Tock"
+rm build/Tock-arm64 build/Tock-x86_64
 cp Info.plist "$APP/Contents/"
 if [ ! -f build/AppIcon.icns ]; then
   swift make-icon.swift

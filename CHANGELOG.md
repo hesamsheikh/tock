@@ -14,6 +14,9 @@ The first version.
 - Settings: theme, sound volume (off, 1 to 5), Wi-Fi, Bluetooth; Wi-Fi and Bluetooth state in the
   status bar.
 - Bluetooth service for the Mac app, paired with a passkey ([protocol](docs/bluetooth.md)).
+- Firmware updates from the Mac app over Bluetooth, checked with SHA-256; a new firmware that
+  crashes early falls back to the previous one.
+- Takes its time zone from the Mac.
 
 **Mac app**
 
@@ -22,3 +25,5 @@ The first version.
 - Settings: tasks and their colors, the voice model and API key, Wi-Fi, the screensaver's lines,
   open at login.
 - Keeps a log of your focus in SQLite whenever the FIRE is in range.
+- Updates itself and the FIRE from the repo's GitHub releases ([Releasing](docs/releasing.md)).
+- Runs on Apple silicon and Intel.

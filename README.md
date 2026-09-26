@@ -26,6 +26,7 @@ You need an M5Stack FIRE and a Mac with macOS 15 or later.
     companion/build.sh install   # build the Mac app and put it in /Applications
 
 Then switch Bluetooth on in the FIRE's Settings and type the code it shows when the Mac asks.
+After that, updates come through the Mac app, for the app and the FIRE both.
 [Getting started](docs/getting-started.md) has the details: what to install first, Wi-Fi, and
 the API key for Talk.
 
@@ -34,6 +35,7 @@ the API key for Talk.
 - [Getting started](docs/getting-started.md): flashing, the Mac app, pairing, Wi-Fi
 - [Using Tock](docs/using-tock.md): the buttons, the apps, tasks, the menu bar
 - [Firmware](docs/firmware.md): how the code is laid out, building, serial debug commands
+- [Releasing](docs/releasing.md): versions, and the updates the Mac app installs
 - [Bluetooth protocol](docs/bluetooth.md): the service the Mac app talks to
 - [Mac app](companion/README.md)
 
@@ -42,6 +44,7 @@ the API key for Talk.
     firmware/    the FIRE's firmware (Arduino, ESP32) and its build scripts
     companion/   the Mac menu bar app (SwiftUI, built without Xcode)
     docs/        these docs
+    release.sh   publishes a release (docs/releasing.md)
 
 ## License
 

@@ -27,10 +27,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct TockCompanionApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-  @StateObject private var link = TockLink(demo: CommandLine.arguments.contains("--demo"))
+  @StateObject private var link: TockLink
+  @StateObject private var updater: Updater
   private static let arg = CommandLine.arguments.contains
 
   init() {
+    let demo = TockCompanionApp.arg("--demo")
+    let link = TockLink(demo: demo)
+    _link = StateObject(wrappedValue: link)
+    _updater = StateObject(wrappedValue: Updater(link: link, automatic: !demo))
     // Tock.app --icons <dir>: write the menu bar poses as PNGs, 8x, and quit (for checking them)
     if let i = CommandLine.arguments.firstIndex(of: "--icons"), i + 1 < CommandLine.arguments.count {
       let dir = URL(fileURLWithPath: CommandLine.arguments[i + 1])
@@ -58,7 +63,7 @@ struct TockCompanionApp: App {
   var body: some Scene {
     // today at a glance, in the menu bar (MenuBar.swift)
     MenuBarExtra {
-      TodayPanel(link: link)
+      TodayPanel(link: link, updater: updater)
     } label: {
       MenuBarLabel(link: link)
     }
@@ -66,7 +71,7 @@ struct TockCompanionApp: App {
 
     // opened from the panel (or cmd-comma there); closing it leaves the app running
     Window("Tock Settings", id: "settings") {
-      ContentView(link: link)
+      ContentView(link: link, updater: updater)
     }
     .windowResizability(.contentSize)
     .windowStyle(.hiddenTitleBar)
@@ -78,7 +83,7 @@ struct TockCompanionApp: App {
         HStack(spacing: 6) { MenuBarLabel(link: link) }
           .padding(.horizontal, 10).padding(.vertical, 4)
           .background(Color.primary.opacity(0.08), in: Capsule())
-        TodayPanel(link: link)
+        TodayPanel(link: link, updater: updater)
       }
       .padding(12)
     }
@@ -93,6 +98,7 @@ enum Tab: String, CaseIterable {
 
 struct ContentView: View {
   @ObservedObject var link: TockLink
+  @ObservedObject var updater: Updater
   @Environment(\.colorScheme) private var scheme
   @State private var tab: Tab = .tasks
 
@@ -114,7 +120,7 @@ struct ContentView: View {
           case .voice: VoicePage(link: link, p: p)
           case .wifi: WifiPage(link: link, p: p)
           case .saver: SaverPage(link: link, p: p)
-          case .mac: MacPage(link: link, p: p)
+          case .mac: MacPage(link: link, updater: updater, p: p)
           }
         }
         .padding(Self.margin)
@@ -835,6 +841,7 @@ struct LineRow: View {
 // The app itself: starting at login, and the log it keeps.
 struct MacPage: View {
   @ObservedObject var link: TockLink
+  @ObservedObject var updater: Updater
   let p: Palette
   @State private var atLogin = SMAppService.mainApp.status == .enabled
   @State private var summary: (days: Int, sessions: Int, since: Int?) = (0, 0, nil)
@@ -866,19 +873,16 @@ struct MacPage: View {
       }
       PageSection(title: "VERSION", p: p) {
         HStack(spacing: 10) {
-          Tile(label: "MAC APP", value: appVersion, p: p)
+          Tile(label: "MAC APP", value: Updater.appVersion.description, p: p)
           Tile(label: "FIRE", value: link.status.map { $0.version ?? "OLDER" } ?? "-", p: p)
         }
+        UpdateBox(updater: updater, link: link, p: p)
       }
     }
     .onAppear {
       summary = link.store?.summary() ?? (0, 0, nil)
       atLogin = SMAppService.mainApp.status == .enabled
     }
-  }
-
-  private var appVersion: String {
-    Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-"
   }
 
   private func setLogin(_ on: Bool) {
@@ -889,6 +893,73 @@ struct MacPage: View {
       link.note = "macOS didn't allow that: \(error.localizedDescription)"
     }
     atLogin = SMAppService.mainApp.status == .enabled
+  }
+}
+
+// Check for updates, and the update as it goes (Updater.swift).
+struct UpdateBox: View {
+  @ObservedObject var updater: Updater
+  @ObservedObject var link: TockLink
+  let p: Palette
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      if updater.busy {
+        UpdateProgress(updater: updater, link: link, p: p)
+      } else if let r = updater.latest, updater.available {
+        PixelText(text: "\(r.version) IS OUT", scale: 2, color: p.body)
+        if !r.notes.isEmpty { Note(text: UpdateBox.summary(r.notes), p: p) }
+        Note(text: "Updates \(updater.what). The FIRE takes about a minute: keep it close and switched on.", p: p)
+        TextButton(label: "UPDATE", color: p.body, p: p) { Task { await updater.update() } }
+      } else {
+        TextButton(label: "CHECK FOR UPDATES", color: p.body, p: p) { Task { await updater.check() } }
+      }
+      if !updater.message.isEmpty && !updater.busy { Note(text: updater.message, p: p) }
+    }
+  }
+
+  // The release notes without their headings, a few lines at most.
+  static func summary(_ notes: String) -> String {
+    notes.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+      .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+      .map { $0.replacingOccurrences(of: "**", with: "") }
+      .prefix(6).joined(separator: "\n")
+  }
+}
+
+// A bar and a line: where the update is.
+struct UpdateProgress: View {
+  @ObservedObject var updater: Updater
+  @ObservedObject var link: TockLink
+  let p: Palette
+  var width: CGFloat = 240
+
+  var body: some View {
+    let (label, fraction) = state
+    VStack(alignment: .leading, spacing: 8) {
+      ZStack(alignment: .leading) {
+        Rectangle().fill(p.faint)
+        Rectangle().fill(p.body).frame(width: width * CGFloat(fraction))
+      }
+      .frame(width: width, height: 6)
+      PixelText(text: label, scale: 2, color: p.grey)
+    }
+  }
+
+  private var state: (String, Double) {
+    switch updater.step {
+    case .checking: return ("CHECKING", 0)
+    case .downloading: return ("DOWNLOADING", 0.02)
+    case .app: return ("UPDATING THIS APP", 1)
+    case .fire:
+      guard let f = link.firmware else { return ("SENDING TO THE FIRE", 0) }
+      switch f.stage {
+      case .sending: return ("SENDING TO THE FIRE \(Int(f.fraction * 100))%", f.fraction * 0.85)
+      case .installing: return ("THE FIRE IS INSTALLING IT", 0.85 + f.fraction * 0.1)
+      case .restarting: return ("THE FIRE IS RESTARTING", 0.97)
+      }
+    default: return ("", 0)
+    }
   }
 }
 

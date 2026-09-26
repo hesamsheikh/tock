@@ -24,6 +24,17 @@ struct Palette {
 
   static func of(_ scheme: ColorScheme) -> Palette { scheme == .dark ? .dark : .light }
 
+  // For the menu bar panel, which is glass: whatever is behind it shows through, so the greys are
+  // the text color at a strength rather than fixed shades, and the heat steps mustard at one.
+  static func glass(_ scheme: ColorScheme) -> Palette {
+    let base = scheme == .dark ? Palette.dark : Palette.light
+    let text = scheme == .dark ? Color.white : Color.black
+    let body = base.body
+    return Palette(bg: .clear, panel: text.opacity(0.08), ink: text.opacity(0.95), grey: text.opacity(0.7), body: body,
+                   faint: text.opacity(0.14), umber: body.opacity(0.35), dim: body.opacity(0.55), amber: body.opacity(0.78),
+                   red: base.red)
+  }
+
   // Task colors, the same in both themes (firmware/tock/tasks.h, simulator/src/os/tasks.ts).
   // Mustard stays for untagged time.
   static let taskColors: [(name: String, color: Color)] = [
