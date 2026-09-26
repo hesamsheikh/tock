@@ -2,7 +2,8 @@
   <img src="docs/images/banner.png" alt="Tock on an M5Stack FIRE: the Arcade timer, with Tock walking toward a cup of coffee" width="100%">
 </p>
 
-# Tock
+<h1 align="center">Tock</h1>
+<p align="center">A simple pet project of how I'd like to focus.</p>
 
 Tock is a desk pet and focus timer for the [M5Stack FIRE](https://docs.m5stack.com/en/core/fire).
 A small pixel creature lives on the screen and keeps you company while you work: it counts down
