@@ -1,0 +1,9 @@
+/agent.md
+/local-reference/
+/lab/
+/simulator/
+/firmware/tock/secrets.h
+/firmware/build/
+/companion/build/
+/.claude/
+.DS_Store

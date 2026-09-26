@@ -1,0 +1,138 @@
+// gfx.h: drawing on the 320 x 240 frame. Mirrors simulator/src/device/gfx.ts and font.ts:
+// everything is integer rectangles, plus a 3 x 5 pixel font and '#'-grid sprites.
+
+#pragma once
+#include <M5Unified.h>
+
+constexpr int SCREEN_W = 320, SCREEN_H = 240;
+
+constexpr uint16_t rgb565(uint32_t rgb) {
+  return ((rgb >> 8) & 0xf800) | ((rgb >> 5) & 0x07e0) | ((rgb >> 3) & 0x001f);
+}
+
+// The palette (simulator/src/device/palette.ts), in two themes. pal:: holds the current one;
+// applyTheme swaps it, and everything drawn after that follows. The screensaver ignores the
+// theme and always uses dark::.
+//   bg the screen, ink text, body Tock's mustard, grey quieter text, faint empty slots, red alerts;
+//   umber, dim, amber: steps from faint to body
+struct Palette {
+  uint16_t bg, body, ink, grey, faint, umber, dim, amber, red;
+};
+
+namespace dark {
+constexpr uint16_t bg = 0x0000, body = rgb565(0xe7ae45), ink = rgb565(0xf2ede3), grey = rgb565(0x6e6a62),
+                   faint = rgb565(0x1c1a17), umber = rgb565(0x3d2f14), dim = rgb565(0x6b5020),
+                   amber = rgb565(0xa67c33), red = rgb565(0xe8574a);
+}  // namespace dark
+
+constexpr Palette THEME_DARK = {dark::bg, dark::body, dark::ink, dark::grey, dark::faint, dark::umber, dark::dim, dark::amber, dark::red};
+constexpr Palette THEME_LIGHT = {rgb565(0xf3eee3), rgb565(0xe7ae45), rgb565(0x2b2925), rgb565(0xa49d90), rgb565(0xe2dbcd),
+                                 rgb565(0xebdcb8), rgb565(0xe3c68c), rgb565(0xe0b366), rgb565(0xd9483b)};
+
+namespace pal {
+inline uint16_t bg = dark::bg, body = dark::body, ink = dark::ink, grey = dark::grey, faint = dark::faint,
+                umber = dark::umber, dim = dark::dim, amber = dark::amber, red = dark::red;
+}  // namespace pal
+
+static const char* const THEME_NAMES[] = {"DARK", "LIGHT"};
+
+inline void applyTheme(int i) {
+  const Palette& t = i == 1 ? THEME_LIGHT : THEME_DARK;
+  pal::bg = t.bg, pal::body = t.body, pal::ink = t.ink, pal::grey = t.grey, pal::faint = t.faint;
+  pal::umber = t.umber, pal::dim = t.dim, pal::amber = t.amber, pal::red = t.red;
+}
+
+enum Align { LEFT, CENTER, RIGHT };
+
+struct Glyph {
+  char c;
+  const char* rows[5];
+};
+
+// 3 x 5, with M, N and W wider so they don't read as H.
+static const Glyph FONT[] = {
+  {'0', {"###", "#.#", "#.#", "#.#", "###"}}, {'1', {".#.", "##.", ".#.", ".#.", "###"}},
+  {'2', {"###", "..#", "###", "#..", "###"}}, {'3', {"###", "..#", ".##", "..#", "###"}},
+  {'4', {"#.#", "#.#", "###", "..#", "..#"}}, {'5', {"###", "#..", "###", "..#", "###"}},
+  {'6', {"###", "#..", "###", "#.#", "###"}}, {'7', {"###", "..#", "..#", ".#.", ".#."}},
+  {'8', {"###", "#.#", "###", "#.#", "###"}}, {'9', {"###", "#.#", "###", "..#", "###"}},
+  {'A', {".#.", "#.#", "###", "#.#", "#.#"}}, {'B', {"##.", "#.#", "##.", "#.#", "##."}},
+  {'C', {".##", "#..", "#..", "#..", ".##"}}, {'D', {"##.", "#.#", "#.#", "#.#", "##."}},
+  {'E', {"###", "#..", "##.", "#..", "###"}}, {'F', {"###", "#..", "##.", "#..", "#.."}},
+  {'G', {".##", "#..", "#.#", "#.#", ".##"}}, {'H', {"#.#", "#.#", "###", "#.#", "#.#"}},
+  {'I', {"###", ".#.", ".#.", ".#.", "###"}}, {'J', {"..#", "..#", "..#", "#.#", ".#."}},
+  {'K', {"#.#", "#.#", "##.", "#.#", "#.#"}}, {'L', {"#..", "#..", "#..", "#..", "###"}},
+  {'M', {"#...#", "##.##", "#.#.#", "#...#", "#...#"}}, {'N', {"#..#", "##.#", "#.##", "#..#", "#..#"}},
+  {'O', {".#.", "#.#", "#.#", "#.#", ".#."}}, {'P', {"##.", "#.#", "##.", "#..", "#.."}},
+  {'Q', {".#.", "#.#", "#.#", "##.", ".##"}}, {'R', {"##.", "#.#", "##.", "#.#", "#.#"}},
+  {'S', {".##", "#..", ".#.", "..#", "##."}}, {'T', {"###", ".#.", ".#.", ".#.", ".#."}},
+  {'U', {"#.#", "#.#", "#.#", "#.#", "###"}}, {'V', {"#.#", "#.#", "#.#", "#.#", ".#."}},
+  {'W', {"#...#", "#...#", "#.#.#", "##.##", "#...#"}}, {'X', {"#.#", "#.#", ".#.", "#.#", "#.#"}},
+  {'Y', {"#.#", "#.#", ".#.", ".#.", ".#."}}, {'Z', {"###", "..#", ".#.", "#..", "###"}},
+  {':', {".", "#", ".", "#", "."}}, {'!', {"#", "#", "#", ".", "#"}}, {'.', {".", ".", ".", ".", "#"}},
+  {'?', {"###", "..#", ".#.", "...", ".#."}}, {'-', {"...", "...", "###", "...", "..."}},
+  {'/', {"..#", "..#", ".#.", "#..", "#.."}}, {'<', {"..#", ".#.", "#..", ".#.", "..#"}},
+  {'>', {"#..", ".#.", "..#", ".#.", "#.."}}, {' ', {"...", "...", "...", "...", "..."}},
+};
+
+inline const Glyph& glyph(char c) {
+  for (const Glyph& g : FONT)
+    if (g.c == c) return g;
+  return FONT[sizeof(FONT) / sizeof(FONT[0]) - 1];  // space
+}
+
+class Gfx {
+ public:
+  explicit Gfx(M5Canvas& canvas) : c(canvas) {}
+
+  void fillScreen(uint16_t color) { c.fillScreen(color); }
+
+  void fillRect(int x, int y, int w, int h, uint16_t color) {
+    if (w <= 0 || h <= 0) return;
+    c.fillRect(x, y, w, h, color);
+  }
+
+  // Every '#' in the grid becomes a px x px square.
+  void drawGrid(const char* const* rows, int n, int x, int y, int px, uint16_t color, bool flip = false) {
+    const int w = strlen(rows[0]);
+    for (int r = 0; r < n; r++)
+      for (int col = 0; col < w; col++)
+        if (rows[r][flip ? w - 1 - col : col] == '#') fillRect(x + col * px, y + r * px, px, px, color);
+  }
+
+  int textWidth(const char* s, int scale) {
+    int w = 0;
+    for (; *s; s++) w += (strlen(glyph(*s).rows[0]) + 1) * scale;
+    return w ? w - scale : 0;
+  }
+
+  // y is the top of the glyphs; text is 5 * scale tall.
+  void drawText(const char* s, int x, int y, int scale, uint16_t color, Align align = LEFT) {
+    if (align == CENTER) x -= textWidth(s, scale) / 2;
+    else if (align == RIGHT) x -= textWidth(s, scale);
+    for (; *s; s++) {
+      const Glyph& g = glyph(*s);
+      drawGrid(g.rows, 5, x, y, scale, color);
+      x += (strlen(g.rows[0]) + 1) * scale;
+    }
+  }
+
+  M5Canvas& canvas() { return c; }
+
+ private:
+  M5Canvas& c;
+};
+
+// "M:SS", rounding up so the clock reads 0:00 only at the very end.
+inline void clockText(char* out, size_t n, uint32_t ms) {
+  const uint32_t s = (ms + 999) / 1000;
+  snprintf(out, n, "%lu:%02lu", (unsigned long)(s / 60), (unsigned long)(s % 60));
+}
+
+// Seconds since boot, wrapped hourly, so wave math stays precise in float.
+inline float animSecs(uint32_t now) { return (now % 3600000UL) * 0.001f; }
+
+inline float easeOut(float k) {
+  k = k < 0 ? 0 : k > 1 ? 1 : k;
+  return 1 - (1 - k) * (1 - k) * (1 - k);
+}

@@ -1,0 +1,14 @@
+# Pinned build: arduino-cli compile --profile fire (firmware/flash.sh does this).
+# Core 2.x on purpose: with core 3.x, Wi-Fi + Bluetooth + PSRAM overflow the ESP32's IRAM.
+profiles:
+  fire:
+    fqbn: m5stack:esp32:m5stack_fire
+    platforms:
+      - platform: m5stack:esp32 (2.1.4)
+        platform_index_url: https://static-cdn.m5stack.com/resource/arduino/package_m5stack_index.json
+    libraries:
+      - M5Unified (0.2.23)
+      - M5GFX (0.2.30)
+      - Adafruit NeoPixel (1.15.5)
+      - NimBLE-Arduino (2.5.1)
+default_profile: fire
