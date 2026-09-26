@@ -864,11 +864,21 @@ struct MacPage: View {
           NSWorkspace.shared.activateFileViewerSelecting([Store.url])
         }
       }
+      PageSection(title: "VERSION", p: p) {
+        HStack(spacing: 10) {
+          Tile(label: "MAC APP", value: appVersion, p: p)
+          Tile(label: "FIRE", value: link.status.map { $0.version ?? "OLDER" } ?? "-", p: p)
+        }
+      }
     }
     .onAppear {
       summary = link.store?.summary() ?? (0, 0, nil)
       atLogin = SMAppService.mainApp.status == .enabled
     }
+  }
+
+  private var appVersion: String {
+    Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-"
   }
 
   private func setLogin(_ on: Bool) {

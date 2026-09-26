@@ -16,6 +16,8 @@
 #include <vector>
 #include "gfx.h"
 
+#define TOCK_VERSION "0.1.0"  // with the Mac app's CFBundleShortVersionString and CHANGELOG.md
+
 // ---------- buttons ----------
 
 enum Btn { BTN_A, BTN_B, BTN_C };

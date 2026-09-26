@@ -8,7 +8,7 @@ Service `7a0c0001-4c3f-4d7e-9b6a-70c6f1a0c0de`:
 
 | UUID suffix | Name | | |
 | --- | --- | --- | --- |
-| `0002` | STATUS | read | JSON: name, battery, charging, clock known, Wi-Fi state, network, IP, the API key's last four characters, model, `goalDay`, `goalMin`, and `timer` (state, break, seconds left and total, round, rounds, task) |
+| `0002` | STATUS | read | JSON: firmware version, name, battery, charging, clock known, Wi-Fi state, network, IP, the API key's last four characters, model, `goalDay`, `goalMin`, and `timer` (state, break, seconds left and total, round, rounds, task) |
 | `0003` | STATS | read | binary, the last 112 days (below) |
 | `0004` | COMMAND | write | one text command per write (below) |
 | `0005` | TASKS | read | text: `cur:<id>`, then one `id\|color\|name` line per task |

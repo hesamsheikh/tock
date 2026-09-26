@@ -5,6 +5,7 @@ import CoreBluetooth
 import Foundation
 
 struct TockStatus: Decodable {
+  var version: String?  // the FIRE's firmware version (from 0.1.0)
   let name: String
   let battery: Int
   let charging: Bool

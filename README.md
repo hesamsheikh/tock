@@ -45,4 +45,4 @@ the API key for Talk.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Changes: [CHANGELOG](CHANGELOG.md).

@@ -333,7 +333,7 @@ void setup() {
 #endif
   net::begin(TOCK_TZ, millis());
   bootAt = lastFrame = millis();
-  Serial.println("tock ready");
+  Serial.println("tock " TOCK_VERSION " ready");
 }
 
 void loop() {

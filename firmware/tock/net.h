@@ -206,10 +206,10 @@ inline void statusJson(char* out, size_t n) {
   const char* w = wstate == W_ONLINE ? "online" : wstate == W_CONNECTING ? "connecting" : wstate == W_FAILED ? "failed"
                 : wstate == W_NO_SETUP ? "not set up" : "off";
   snprintf(out, n,
-           "{\"name\":\"%s\",\"battery\":%d,\"charging\":%s,\"clock\":%s,\"wifi\":\"%s\",\"ssid\":\"%s\",\"ip\":\"%s\","
+           "{\"version\":\"%s\",\"name\":\"%s\",\"battery\":%d,\"charging\":%s,\"clock\":%s,\"wifi\":\"%s\",\"ssid\":\"%s\",\"ip\":\"%s\","
            "\"key\":\"%s\",\"model\":\"%s\",\"goalDay\":%d,\"goalMin\":%d,\"timer\":{\"state\":\"%s\",\"break\":%s,"
            "\"left\":%u,\"total\":%u,\"round\":%d,\"rounds\":%d,\"task\":%d}}",
-           btName, (int)M5.Power.getBatteryLevel(), M5.Power.isCharging() == m5::Power_Class::is_charging ? "true" : "false",
+           TOCK_VERSION, btName, (int)M5.Power.getBatteryLevel(), M5.Power.isCharging() == m5::Power_Class::is_charging ? "true" : "false",
            clockd::known() ? "true" : "false", w, wstate == W_ONLINE ? ssid.c_str() : "",
            wstate == W_ONLINE ? WiFi.localIP().toString().c_str() : "",
            key.length() >= 4 ? key.substring(key.length() - 4).c_str() : "", model.c_str(), sys.prefs.get("stats.goalday", -1), goalMinutes(),
