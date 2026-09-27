@@ -5,10 +5,12 @@ Arduino C++ for the ESP32, in `firmware/tock/`. Built with `arduino-cli` against
 overflow the ESP32's IRAM), M5Unified and M5GFX for the board, NimBLE for Bluetooth, and
 Adafruit NeoPixel for the LEDs.
 
-The frame is an 8-bit canvas (each color gets a palette slot the first time it's drawn) in
-internal RAM, and only the rows that changed go to the display: most frames take a few
-milliseconds, and the loop runs at up to 60 fps. While Talk or an update runs, they need that
-internal RAM, so the frame moves to PSRAM and back after. `flash.sh` also leaves out the parts of
+The frame is 8-bit (each color gets a palette slot the first time it's drawn), in four strips of
+60 rows kept in internal RAM, and only the rows that changed go to the display: most frames take
+a few milliseconds, and the loop runs at up to 60 fps. While Talk or an update runs, they need
+that internal RAM, so the strips move to PSRAM, and back after, each where there's room. Talk and
+updates run at 20 fps (10 while Talk connects): PSRAM shares a bus with the flash the code runs
+from, and drawing there flat out slowed Talk's TLS handshake past its timeout. `flash.sh` also leaves out the parts of
 NimBLE Tock doesn't use (the client and the scanner).
 
 PSRAM runs at 40 MHz, not the core's 80: at 80 the FIRE's PSRAM hands back words shifted by a

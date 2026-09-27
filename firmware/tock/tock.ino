@@ -45,8 +45,7 @@
 #endif
 
 Sys sys;
-M5Canvas canvas(&M5.Display);
-Gfx gfx(canvas);
+Gfx gfx(M5.Display);
 
 TimerApp* timerApp;
 StatsApp* statsApp;
@@ -78,21 +77,23 @@ uint32_t bootAt = 0, lastFrame = 0;
 // ---------- screens ----------
 
 // The frame lives in internal RAM, except while Talk or an update runs: they need that RAM
-// themselves (TLS, audio, the update's buffer), so it moves to PSRAM, and back after.
-bool canvasFast = false;
+// themselves (TLS, audio, the update's buffer), so it moves to PSRAM, and back after, strip by
+// strip as room allows (checked every 10 s while some are still in PSRAM).
+bool canvasFast = false;  // wanted in internal RAM
 uint32_t canvasTriedAt = 0, bootBlock = 0;
 void placeCanvas(bool fast) {
-  if (fast == canvasFast) return;
-  // back to internal RAM only if a block that big is free (moving rebuilds the frame), checked
-  // at most every 10 s
-  if (fast && canvasTriedAt && millis() - canvasTriedAt < 10000) return;
-  if (fast && heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < SCREEN_W * SCREEN_H + 8192) {
-    canvasTriedAt = millis() | 1;
-    return;
+  if (!fast && !canvasFast) return;
+  if (fast && canvasFast && (gfx.internalStrips() == Gfx::STRIPS || millis() - canvasTriedAt < 10000)) return;
+  if (fast && canvasFast) {  // retrying: only if another strip would fit now (moving rebuilds the frame)
+    const size_t spare = ESP.getFreeHeap() > Gfx::KEEP_FREE ? ESP.getFreeHeap() - Gfx::KEEP_FREE : 0;
+    canvasTriedAt = millis();
+    if (spare < Gfx::STRIP_BYTES || heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < Gfx::STRIP_BYTES)
+      return;
   }
-  canvasFast = gfx.place(fast);
-  canvasTriedAt = fast && !canvasFast ? millis() | 1 : 0;
-  Serial.printf("canvas: %s, internal heap %u\n", canvasFast ? "internal RAM" : "PSRAM", ESP.getFreeHeap());
+  canvasFast = fast;
+  canvasTriedAt = millis();
+  const int in = gfx.place(fast);
+  Serial.printf("canvas: %d of %d strips in internal RAM, internal heap %u\n", in, Gfx::STRIPS, ESP.getFreeHeap());
 }
 
 void switchTo(Screen* s, uint32_t now) {
@@ -273,8 +274,9 @@ void handleSerial(uint32_t now) {
                       net::stackReady ? NimBLEDevice::getNumBonds() : -1, net::btName);
         Serial.printf("rtc=%d clock=%d epoch=%ld today=%ld heap=%u psram=%u\n", M5.Rtc.isEnabled(), clockd::known(),
                       (long)time(nullptr), (long)clockd::today(), ESP.getFreeHeap(), ESP.getFreePsram());
-        Serial.printf("frame %.1f ms: draw %.1f, push %.1f (%d rows), leds %.1f, net %.1f, canvas in %s\n", tAll / 1000,
-                      tDraw / 1000, tPush / 1000, gfx.sentRows, tLeds / 1000, tNet / 1000, canvasFast ? "internal RAM" : "PSRAM");
+        Serial.printf("frame %.1f ms: draw %.1f, push %.1f (%d rows), leds %.1f, net %.1f\n", tAll / 1000,
+                      tDraw / 1000, tPush / 1000, gfx.sentRows, tLeds / 1000, tNet / 1000);
+        Serial.printf("frame strips in internal RAM: %d of %d\n", gfx.internalStrips(), Gfx::STRIPS);
         Serial.printf("internal RAM: largest block %u now, %u at boot\n", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                       (unsigned)bootBlock);
         break;
@@ -376,7 +378,9 @@ void setup() {
   for (auto* b : {&M5.BtnA, &M5.BtnB, &M5.BtnC}) b->setHoldThresh(HOLD_MS);
 
   bootBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  canvasFast = gfx.place(true);  // before Wi-Fi and Bluetooth take their share of internal RAM
+  canvasFast = true;
+  canvasTriedAt = millis();
+  gfx.place(true);  // before Wi-Fi and Bluetooth take their share of internal RAM
 
   sys.prefs.begin();
   applyTheme(sys.prefs.get("sys.theme", 0));
@@ -454,7 +458,7 @@ void loop() {
 
   sys.sound.update(now);
   const uint32_t u1 = micros();
-  gfx.present(M5.Display);
+  gfx.present();
   const uint32_t u2 = micros();
   sys.leds.show();
   const uint32_t u3 = micros();
@@ -466,7 +470,12 @@ void loop() {
   static bool confirmed = false;
   if (!confirmed && now - bootAt > CONFIRM_AFTER_MS) confirmed = true, update::confirm();
 
-  // up to 60 fps: most frames only send the rows that changed, so they take a few ms
+  // Up to 60 fps: most frames only send the rows that changed, so they take a few ms. In Talk and
+  // updates 20 fps, and 10 while Talk connects: the frame is in PSRAM then, PSRAM and the flash the
+  // code runs from share one bus, and drawing flat out there starves core 0 (a TLS handshake went
+  // from 3.5 s to timing out).
+  const bool talking = active == (Screen*)talkApp;
+  const uint32_t budget = talking && talkApp->connecting() ? 100 : talking || update::showing(now) ? 50 : 16;
   const uint32_t spent = millis() - now;
-  if (spent < 16) delay(16 - spent);
+  if (spent < budget) delay(budget - spent);
 }

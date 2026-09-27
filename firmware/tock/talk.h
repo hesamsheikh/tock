@@ -40,9 +40,16 @@ class Wss {
   String connect(const char* host, const String& path, const String& header) {
     close();
     tls.setCACert(OPENAI_ROOT_CA);
-    tls.setHandshakeTimeout(12);
+    tls.setHandshakeTimeout(20);
     Serial.printf("talk: connecting, heap %u (largest block %u)\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    if (!tls.connect(host, 443)) {
+    // The TLS handshake's key exchange runs seconds in one go, on core 0, without yielding: the idle
+    // task there can't feed the task watchdog meanwhile, so it's off for the handshake.
+    const uint32_t t0 = millis();
+    disableCore0WDT();
+    const bool ok = tls.connect(host, 443);
+    enableCore0WDT();
+    Serial.printf("talk: tls handshake %s in %lu ms\n", ok ? "done" : "failed", (unsigned long)(millis() - t0));
+    if (!ok) {
       char why[100];
       tls.lastError(why, sizeof why);
       Serial.printf("talk: tls failed: %s\n", why);
@@ -58,12 +65,11 @@ class Wss {
                  "Sec-WebSocket-Key: " + key + "\r\nSec-WebSocket-Version: 13\r\n" + header + "\r\n\r\n";
     tls.print(req);
     req = "";  // it held the key
-    tls.setTimeout(8000);
-    const String status = tls.readStringUntil('\n');
+    const String status = readLine(8000);
     const int code = status.length() > 12 ? status.substring(9, 12).toInt() : 0;
     Serial.printf("talk: handshake reply \"%s\"\n", status.c_str());
     while (tls.connected()) {  // skip the response headers
-      const String line = tls.readStringUntil('\n');
+      const String line = readLine(8000);
       if (line.length() <= 1) break;
     }
     if (code != 101) {
@@ -78,6 +84,13 @@ class Wss {
   }
 
   bool isOpen() { return open && tls.connected(); }
+
+  // Give back the message buffer (PSRAM); it grows again when needed.
+  void release() {
+    free(msg);
+    msg = nullptr;
+    cap = msgLen = 0;
+  }
 
   void close() {
     if (open) sendFrame(0x8, nullptr, 0);
@@ -167,14 +180,33 @@ class Wss {
     return true;
   }
 
+  // The waits below sleep a tick between tries: this runs on core 0, and spinning there for more
+  // than 5 s starves its idle task, which the task watchdog answers with a reset.
   bool readExact(uint8_t* p, size_t n) {
     const uint32_t start = millis();
     while (n) {
       const int r = tls.read(p, n);
       if (r > 0) p += r, n -= r;
       else if (millis() - start > 3000 || !tls.connected()) return false;
+      else vTaskDelay(1);
     }
     return true;
+  }
+
+  // One line of the HTTP reply, without the '\n' ("" on timeout).
+  String readLine(uint32_t timeoutMs) {
+    String line;
+    const uint32_t start = millis();
+    while (millis() - start < timeoutMs && tls.connected()) {
+      const int c = tls.read();
+      if (c < 0) {
+        vTaskDelay(1);
+        continue;
+      }
+      if (c == '\n') return line;
+      line += (char)c;
+    }
+    return line;
   }
 
   bool sendFrame(uint8_t op, const uint8_t* data, size_t len) {
@@ -226,13 +258,31 @@ class TalkLink {
   volatile bool discarding = false;  // skip the rest of a reply the user stopped
 
   void begin() {
-    if (ring) return;
-    ring = (int16_t*)ps_malloc(RING * 2);
-    mic = (int16_t*)ps_malloc(MIC_RING * 2);
-    out = (char*)ps_malloc(CHUNK * 3 + 128);
-    ctlQ = xQueueCreate(12, sizeof(char*));
-    evQ = xQueueCreate(8, sizeof(TalkEvent));
+    if (running) return;
+    if (!ring) ring = (int16_t*)ps_malloc(RING * 2);
+    if (!mic) mic = (int16_t*)ps_malloc(MIC_RING * 2);
+    if (!out) out = (char*)ps_malloc(CHUNK * 3 + 128);
+    if (!ctlQ) ctlQ = xQueueCreate(12, sizeof(char*));
+    if (!evQ) evQ = xQueueCreate(8, sizeof(TalkEvent));
+    quitReq = false;
+    running = true;
     xTaskCreatePinnedToCore(run, "talknet", 16384, this, 3, nullptr, 0);
+  }
+
+  // Leaving Talk: the task stops and everything goes back, so the frame can have its internal
+  // RAM again (the task's stack sits where the frame was). If the task is stuck in a handshake,
+  // it stops when that ends, and its buffers stay for next time rather than go while in use.
+  void end() {
+    if (!running) return;
+    quitReq = true;
+    for (int i = 0; i < 100 && running; i++) vTaskDelay(pdMS_TO_TICKS(10));
+    if (running) return;
+    free(ring), free(mic), free(out);
+    ring = mic = nullptr;
+    out = nullptr;
+    vQueueDelete(ctlQ), vQueueDelete(evQ);
+    ctlQ = evQ = nullptr;
+    ws.release();
   }
 
   void connect(bool gptLive, const String& model, const String& path, const String& auth, const String& start) {
@@ -249,10 +299,11 @@ class TalkLink {
   bool isOpen() const { return open; }
 
   void send(const char* json) {
+    if (!ctlQ) return;
     char* p = strdup(json);
     if (p && xQueueSend(ctlQ, &p, 0) != pdTRUE) free(p);
   }
-  bool poll(TalkEvent& e) { return xQueueReceive(evQ, &e, 0) == pdTRUE; }
+  bool poll(TalkEvent& e) { return evQ && xQueueReceive(evQ, &e, 0) == pdTRUE; }
 
   size_t available() const { return head - tail; }
   void dropPlayback() { tail = head; }
@@ -271,7 +322,7 @@ class TalkLink {
   volatile size_t micHead = 0, micTail = 0;
   volatile bool micFlush = false;
   char* out = nullptr;
-  volatile bool connectReq = false, closeReq = false, open = false;
+  volatile bool connectReq = false, closeReq = false, open = false, quitReq = false, running = false;
   bool live = false;
   String modelName, connPath, connAuth, startJson;
   uint32_t heardAt = 0, silenceAt = 0;
@@ -287,6 +338,14 @@ class TalkLink {
 
   void loop() {
     for (;;) {
+      if (quitReq) {
+        if (open) ws.close();
+        open = false;
+        char* p;
+        while (xQueueReceive(ctlQ, &p, 0) == pdTRUE) free(p);
+        running = false;
+        vTaskDelete(nullptr);
+      }
       if (connectReq) {
         connectReq = false;
         doConnect();
@@ -531,6 +590,8 @@ class TalkApp : public App {
 
   bool quiet() override { return true; }
 
+  bool connecting() const { return phase == P_CONNECTING; }
+
   void enter(uint32_t now) override {
     link.begin();
     M5.Speaker.end();  // Talk's own output (voice.h) takes the speaker
@@ -543,6 +604,7 @@ class TalkApp : public App {
     stopMic();
     link.silence = false;
     link.close();
+    link.end();
     voice::end();
     M5.Speaker.begin();
     phase = P_OFF;
