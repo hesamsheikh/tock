@@ -13,14 +13,15 @@
 //                     "tasks:<lines id|color|name>" (the whole list; id 0 = new)
 //                     "msgs:<lines>" (the screensaver's lines; empty = the defaults)
 //                     "goal:<hours>" "goalmin:<minutes>" (today's goal, 15 minutes to 16 hours)
-//                     "update:<size> <sha256>" "update:end" "update:cancel" (new firmware, update.h)
+//                     "update:<size> <sha256> [<deflated size>]" "update:end" "update:cancel"
+//                     (new firmware, update.h)
 //   TASKS      read   text: "cur:<current id>", then a line "id|color|name" per task
 //   MESSAGES   read   text: the screensaver's lines
 //   TASKSTATS  read   binary per-task minutes for the last 14 days, see taskStatsBlob()
 //   UPDATE     write  firmware chunks (u32 offset + bytes, without response)
 //              read   how the update is going, see update::report()
 //
-// Serial debug: w = Wi-Fi scan, l = Bluetooth scan, W<ssid>\t<password>\n = save a network.
+// Serial debug: w = Wi-Fi scan, W<ssid>\t<password>\n = save a network.
 
 #pragma once
 #include <NimBLEDevice.h>  // NimBLE, not the core's Bluedroid stack: Bluedroid and Wi-Fi don't fit in IRAM together
@@ -145,6 +146,10 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     pairAt = millis();
     pairing = true;
     return passkey;
+  }
+  void onConnParamsUpdate(NimBLEConnInfo& info) override {
+    Serial.printf("bt: connection interval %.2f ms, latency %u, mtu %u\n", info.getConnInterval() * 1.25f,
+                  info.getConnLatency(), info.getMTU());
   }
   void onAuthenticationComplete(NimBLEConnInfo& info) override {
     pairing = false;
@@ -341,7 +346,7 @@ inline void runCommand(char* c, uint32_t now) {
   } else if (!strncmp(c, "update:", 7)) {
     update::start(c + 7, now);
     // the fast lane for it: the biggest packets the radio takes, and a connection event every 15 ms
-    if (update::state == update::RECEIVING)
+    if (update::state == update::PREPARING)
       for (uint16_t h : NimBLEDevice::getServer()->getPeerDevices()) {
         NimBLEDevice::getServer()->setDataLen(h, 251);
         NimBLEDevice::getServer()->updateConnParams(h, 12, 12, 0, 400);
@@ -455,19 +460,6 @@ inline void scanWifi(Stream& out) {
                WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "  (open)" : "");
   WiFi.scanDelete();
   if (wasOff) WiFi.mode(WIFI_OFF);
-}
-
-inline void scanBluetooth(Stream& out) {
-  ensureStack();
-  NimBLEScan* scan = NimBLEDevice::getScan();
-  scan->setActiveScan(true);
-  const NimBLEScanResults found = scan->getResults(4000, false);
-  out.printf("bluetooth scan: %d devices\n", found.getCount());
-  for (int i = 0; i < found.getCount(); i++) {
-    const NimBLEAdvertisedDevice* d = found.getDevice(i);
-    out.printf("  %4d dBm  %s  %s\n", d->getRSSI(), d->getAddress().toString().c_str(), d->haveName() ? d->getName().c_str() : "");
-  }
-  scan->clearResults();
 }
 
 }  // namespace net

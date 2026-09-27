@@ -113,19 +113,25 @@ class Wss {
         if (control) ctlOp = op, ctlLen = 0;
         inFrame = true;
       }
-      const size_t take = min<size_t>(frameLeft, tls.available());
+      size_t take = min<size_t>(frameLeft, tls.available());
+      // count what read() really hands over: it can be less than available() said, and counting
+      // the rest would lose the frame boundaries for the whole connection
       if (control) {
-        const size_t room = sizeof ctl - ctlLen, k = min(take, room);
-        tls.read(ctl + ctlLen, k);
-        ctlLen += k;
-        for (size_t i = k; i < take; i++) tls.read();
+        uint8_t skip[64];
+        const size_t room = sizeof ctl - ctlLen;
+        const int r = room ? tls.read(ctl + ctlLen, min(take, room)) : tls.read(skip, min(take, sizeof skip));
+        if (r <= 0) break;
+        take = r;
+        if (room) ctlLen += r;
       } else {
         if (!reserve(msgLen + take + 1)) {
           close();
           return nullptr;
         }
-        tls.read(msg + msgLen, take);
-        msgLen += take;
+        const int r = tls.read(msg + msgLen, take);
+        if (r <= 0) break;
+        take = r;
+        msgLen += r;
       }
       frameLeft -= take;
       if (frameLeft) continue;
@@ -452,7 +458,10 @@ class Orb {
       case ORB_SPEAKING: target = 36 + level * 20, amp = 1 + level * 4, speed = 2.5f; break;
       case ORB_ERROR: target = 24, amp = 0, core = pal::grey, mid = pal::grey, edge = pal::faint; break;
     }
-    r += (target - r) * 0.3f;
+    // eases 30% of the way per 33 ms, whatever the frame rate
+    const float k = 1 - powf(0.7f, min<uint32_t>(200, now - lastDraw) / 33.0f);
+    lastDraw = now;
+    r += (target - r) * k;
 
     if (mood == ORB_SPEAKING)  // ripples drifting outward and fading
       for (int k = 0; k < 2; k++) {
@@ -483,6 +492,7 @@ class Orb {
 
  private:
   float r = 20;
+  uint32_t lastDraw = 0;
 
   void ring(Gfx& g, float rr, uint16_t color) {
     const int reach = (int)ceilf((rr + CELL) / CELL) * CELL;
@@ -591,6 +601,8 @@ class TalkApp : public App {
       }
     }
     if (phase == P_NEED_WIFI && net::online()) decide(now);  // just after boot, Wi-Fi takes a few seconds
+    // more of the reply after it looked finished (GPT-Live pauses while it looks something up): play it
+    if (phase == P_READY && link.available() > 0 && !link.discarding) beginSpeaking(now);
     if (phase == P_CONNECTING && (int32_t)(now - phaseSince) > 20000) return fail("NO ANSWER FROM OPENAI");
     if (phase == P_RECORDING) record(now);
     if (phase == P_THINKING) think(now);
@@ -667,6 +679,7 @@ class TalkApp : public App {
   uint32_t phaseSince = 0;
   bool responseDone = false, started = false;
   float level = 0;
+  uint32_t levelAt = 0;
   char error[96] = "";
 
   size_t playFrom = 0, playedAt = 0;  // where in the reply the speaker started, to follow it
@@ -750,7 +763,9 @@ class TalkApp : public App {
       for (size_t i = 0; i < n; i++) peak = max<int32_t>(peak, abs(buf[i]));
       link.pushMic(buf, n);
     }
-    level = level * 0.6f + min(1.0f, peak / 14000.0f) * 0.4f;
+    const float k = 1 - powf(0.6f, min<uint32_t>(200, now - levelAt) / 33.0f);  // 40% per 33 ms
+    levelAt = now;
+    level += (min(1.0f, peak / 14000.0f) - level) * k;
   }
 
   // A let go: send the message (or drop it if it was only a tap).

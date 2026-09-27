@@ -17,11 +17,12 @@
 //   x        countdown speed 1x / 10x / 60x
 //   T<epoch> set the clock (UTC seconds), then a newline
 //   d / D    fill / wipe the focus log with demo history
-//   w / l    scan for Wi-Fi networks / Bluetooth devices
+//   w        scan for Wi-Fi networks
 //   W<ssid>\t<password>  save a Wi-Fi network (what wifi-setup.sh sends), then a newline
 //   K<id|color|name;...>  set the task list (what the Mac app sends), then a newline
 //   M<line;line;...>      set the screensaver's lines, then a newline
 //   v        speaker test (silent)    m   mic test     L   Bluetooth off and on
+//   P        PSRAM test: 1 MB checked every 5 s for a minute
 
 #include <M5Unified.h>
 #include "power.h"
@@ -57,20 +58,48 @@ Launcher* launcher;
 Screen* active = nullptr;
 SettingsSheet sheet;
 
+// PSRAM at 40 MHz. The core's prebuilt libraries start it at 80, where this FIRE's PSRAM hands
+// back words shifted by a nibble (serial P tests it). flash.sh links with --wrap=psram_enable, so
+// the core's call lands here; flash stays at 80 MHz (PSRAM_CACHE_F80M_S40M, a supported pairing).
+extern "C" esp_err_t __real_psram_enable(int mode, int vaddrMode);
+extern "C" esp_err_t __wrap_psram_enable(int mode, int vaddrMode) { return __real_psram_enable(0, vaddrMode); }
+
 // A firmware from the Mac starts on probation (update.h): loop() confirms it after a while, and
 // until then a crash sends the bootloader back to the previous one.
 extern "C" bool verifyRollbackLater() { return true; }
 constexpr uint32_t CONFIRM_AFTER_MS = 15000;
 
 bool booting = true;
+// where a frame's time goes, in microseconds, smoothed (serial r)
+float tDraw = 0, tPush = 0, tLeds = 0, tNet = 0, tAll = 0;
+inline void smooth(float& avg, uint32_t us) { avg += (us - avg) * 0.1f; }
 uint32_t bootAt = 0, lastFrame = 0;
 
 // ---------- screens ----------
+
+// The frame lives in internal RAM, except while Talk or an update runs: they need that RAM
+// themselves (TLS, audio, the update's buffer), so it moves to PSRAM, and back after.
+bool canvasFast = false;
+uint32_t canvasTriedAt = 0, bootBlock = 0;
+void placeCanvas(bool fast) {
+  if (fast == canvasFast) return;
+  // back to internal RAM only if a block that big is free (moving rebuilds the frame), checked
+  // at most every 10 s
+  if (fast && canvasTriedAt && millis() - canvasTriedAt < 10000) return;
+  if (fast && heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < SCREEN_W * SCREEN_H + 8192) {
+    canvasTriedAt = millis() | 1;
+    return;
+  }
+  canvasFast = gfx.place(fast);
+  canvasTriedAt = fast && !canvasFast ? millis() | 1 : 0;
+  Serial.printf("canvas: %s, internal heap %u\n", canvasFast ? "internal RAM" : "PSRAM", ESP.getFreeHeap());
+}
 
 void switchTo(Screen* s, uint32_t now) {
   sheet.close();
   if (s == active) return;
   if (active) active->leave(now);
+  placeCanvas(s != (Screen*)talkApp && !update::showing(now));  // before Talk's enter() asks for its memory
   active = s;
   active->enter(now);
 }
@@ -129,12 +158,48 @@ void pollButtons(uint32_t now) {
   serialEventCount = 0;
 }
 
+// ---------- PSRAM test (serial P) ----------
+// 1 MB of PSRAM filled with a pattern, checked every 5 s for a minute while everything else runs.
+
+namespace psramTest {
+inline uint32_t* buf = nullptr;
+inline uint32_t startedAt = 0, lastCheck = 0, errors = 0;
+constexpr size_t WORDS = 256 * 1024;
+inline uint32_t pattern(size_t i) { uint32_t x = i * 2654435761u + 0x9e3779b9u; return x ^ (x >> 15); }
+
+inline void start(uint32_t now) {
+  if (!buf) buf = (uint32_t*)ps_malloc(WORDS * 4);
+  if (!buf) return (void)Serial.println("psram: no memory");
+  for (size_t i = 0; i < WORDS; i++) buf[i] = pattern(i);
+  startedAt = lastCheck = now;
+  errors = 0;
+  Serial.println("psram: filled 1 MB, checking every 5 s for 60 s");
+}
+
+inline void tick(uint32_t now) {
+  if (!startedAt || now - lastCheck < 5000) return;
+  lastCheck = now;
+  uint32_t bad = 0;
+  for (size_t i = 0; i < WORDS; i++) {
+    const uint32_t want = pattern(i), got = buf[i];
+    if (got != want) {
+      if (bad < 4) Serial.printf("psram:   @%u want %08lx got %08lx\n", (unsigned)(i * 4), (unsigned long)want, (unsigned long)got);
+      bad++;
+      buf[i] = want;  // count each change once
+    }
+  }
+  errors += bad;
+  Serial.printf("psram: %lus, %lu words changed since the last check, %lu in all\n", (unsigned long)((now - startedAt) / 1000),
+                (unsigned long)bad, (unsigned long)errors);
+  if (now - startedAt >= 60000) startedAt = 0, Serial.println("psram: done");
+}
+}  // namespace psramTest
+
 // ---------- serial debug ----------
 
 void dumpScreenshot() {
-  const uint8_t* buf = (const uint8_t*)canvas.getBuffer();
   const size_t n = SCREEN_W * SCREEN_H;
-  auto px = [&](size_t i) { return (uint16_t)(buf[i * 2] << 8 | buf[i * 2 + 1]); };
+  auto px = [&](size_t i) { return gfx.pixel(i); };
   size_t len = 0;
   for (size_t i = 0; i < n;) {
     size_t run = 1;
@@ -146,7 +211,8 @@ void dumpScreenshot() {
   for (size_t i = 0; i < n;) {
     size_t run = 1;
     while (i + run < n && run < 255 && px(i + run) == px(i)) run++;
-    const uint8_t rec[3] = {(uint8_t)run, buf[i * 2], buf[i * 2 + 1]};
+    const uint16_t v = px(i);
+    const uint8_t rec[3] = {(uint8_t)run, (uint8_t)(v >> 8), (uint8_t)v};
     Serial.write(rec, 3);
     i += run;
   }
@@ -207,6 +273,10 @@ void handleSerial(uint32_t now) {
                       net::stackReady ? NimBLEDevice::getNumBonds() : -1, net::btName);
         Serial.printf("rtc=%d clock=%d epoch=%ld today=%ld heap=%u psram=%u\n", M5.Rtc.isEnabled(), clockd::known(),
                       (long)time(nullptr), (long)clockd::today(), ESP.getFreeHeap(), ESP.getFreePsram());
+        Serial.printf("frame %.1f ms: draw %.1f, push %.1f (%d rows), leds %.1f, net %.1f, canvas in %s\n", tAll / 1000,
+                      tDraw / 1000, tPush / 1000, gfx.sentRows, tLeds / 1000, tNet / 1000, canvasFast ? "internal RAM" : "PSRAM");
+        Serial.printf("internal RAM: largest block %u now, %u at boot\n", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                      (unsigned)bootBlock);
         break;
       case 'x':
         sys.timeScale = sys.timeScale == 1 ? 10 : sys.timeScale == 10 ? 60 : 1;
@@ -259,7 +329,7 @@ void handleSerial(uint32_t now) {
                       (long)(got > 2400 ? sum / (int64_t)(got - 2400) : 0));
         break;
       }
-      case 'l': net::scanBluetooth(Serial); break;
+      case 'P': psramTest::start(now); break;
       case 'd': sys.focus.seedDemo(tasks.mask()); Serial.println("demo history added"); break;
       case 'D': sys.focus.clear(); Serial.println("focus log wiped"); break;
     }
@@ -305,11 +375,8 @@ void setup() {
   M5.Display.setBrightness(140);
   for (auto* b : {&M5.BtnA, &M5.BtnB, &M5.BtnC}) b->setHoldThresh(HOLD_MS);
 
-  canvas.setColorDepth(16);
-  if (!canvas.createSprite(SCREEN_W, SCREEN_H)) {
-    canvas.setPsram(true);
-    canvas.createSprite(SCREEN_W, SCREEN_H);
-  }
+  bootBlock = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  canvasFast = gfx.place(true);  // before Wi-Fi and Bluetooth take their share of internal RAM
 
   sys.prefs.begin();
   applyTheme(sys.prefs.get("sys.theme", 0));
@@ -343,14 +410,18 @@ void setup() {
 
 void loop() {
   M5.update();
+  static bool wasOff = false;
   if (power::update()) {  // soft-off on USB power
     sys.leds.clear();
     sys.leds.show();
+    wasOff = true;
     delay(50);
     return;
   }
+  if (wasOff) wasOff = false, gfx.invalidate();  // whole frame again after waking
 
   const uint32_t now = millis();
+  const uint32_t u0 = micros();
   const float dt = min<uint32_t>(100, now - lastFrame);
   lastFrame = now;
 
@@ -367,8 +438,10 @@ void loop() {
     }
   } else if (update::showing(now)) {
     if (active != launcher) goHome(now);  // lets Talk and the rest let go of their memory
+    placeCanvas(false);
     update::draw(gfx, now);
   } else {
+    if (active != (Screen*)talkApp) placeCanvas(true);  // back from an update, say
     sys.sound.hushed = active->quiet();
     pollButtons(now);
     sys.sound.hushed = active->quiet();
@@ -380,14 +453,20 @@ void loop() {
   }
 
   sys.sound.update(now);
-  canvas.pushSprite(0, 0);
+  const uint32_t u1 = micros();
+  gfx.present(M5.Display);
+  const uint32_t u2 = micros();
   sys.leds.show();
+  const uint32_t u3 = micros();
   net::tick(now);
   update::tick(now);
+  const uint32_t u4 = micros();
+  smooth(tDraw, u1 - u0), smooth(tPush, u2 - u1), smooth(tLeds, u3 - u2), smooth(tNet, u4 - u3), smooth(tAll, u4 - u0);
+  psramTest::tick(now);
   static bool confirmed = false;
   if (!confirmed && now - bootAt > CONFIRM_AFTER_MS) confirmed = true, update::confirm();
 
-  // about 30 fps
+  // up to 60 fps: most frames only send the rows that changed, so they take a few ms
   const uint32_t spent = millis() - now;
-  if (spent < 33) delay(33 - spent);
+  if (spent < 16) delay(16 - spent);
 }

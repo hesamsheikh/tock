@@ -17,6 +17,9 @@ The first version.
 - Firmware updates from the Mac app over Bluetooth, checked with SHA-256; a new firmware that
   crashes early falls back to the previous one.
 - Takes its time zone from the Mac.
+- Draws in internal RAM and sends the display only what changed: up to 60 fps, most frames in a
+  few milliseconds. PSRAM runs at 40 MHz, where it keeps what's stored in it.
+- Firmware updates come compressed (about 2/3 the size) and take about a minute and a half.
 
 **Mac app**
 

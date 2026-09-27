@@ -82,23 +82,45 @@ inline const Glyph& glyph(char c) {
   return FONT[sizeof(FONT) / sizeof(FONT[0]) - 1];  // space
 }
 
+// The frame is an 8-bit canvas: each color gets one of 256 palette slots the first time it's
+// drawn, which halves the memory, and puts the frame in internal RAM, where drawing is quick
+// (PSRAM is slow to write). present() then sends the display only the rows that changed.
 class Gfx {
  public:
   explicit Gfx(M5Canvas& canvas) : c(canvas) {}
 
-  void fillScreen(uint16_t color) { c.fillScreen(color); }
+  // (Re)make the canvas, in internal RAM if `fast` and there's room, else in PSRAM. Returns
+  // whether it's in internal RAM. The whole frame goes to the display next time.
+  bool place(bool fast) {
+    c.deleteSprite();
+    c.setColorDepth(lgfx::palette_8bit);
+    c.setPsram(!fast);
+    bool ok = c.createSprite(SCREEN_W, SCREEN_H);
+    if (!ok && fast) {
+      fast = false;
+      c.setPsram(true);
+      ok = c.createSprite(SCREEN_W, SCREEN_H);
+    }
+    c.createPalette();
+    for (int i = 0; i < used; i++) c.setPaletteColor(i, pal565[i]);
+    full = true;
+    return ok && fast;
+  }
+
+  void fillScreen(uint16_t color) { c.fillScreen(idx(color)); }
 
   void fillRect(int x, int y, int w, int h, uint16_t color) {
     if (w <= 0 || h <= 0) return;
-    c.fillRect(x, y, w, h, color);
+    c.fillRect(x, y, w, h, idx(color));
   }
 
   // Every '#' in the grid becomes a px x px square.
   void drawGrid(const char* const* rows, int n, int x, int y, int px, uint16_t color, bool flip = false) {
     const int w = strlen(rows[0]);
+    const uint8_t k = idx(color);
     for (int r = 0; r < n; r++)
       for (int col = 0; col < w; col++)
-        if (rows[r][flip ? w - 1 - col : col] == '#') fillRect(x + col * px, y + r * px, px, px, color);
+        if (rows[r][flip ? w - 1 - col : col] == '#') c.fillRect(x + col * px, y + r * px, px, px, k);
   }
 
   int textWidth(const char* s, int scale) {
@@ -118,10 +140,79 @@ class Gfx {
     }
   }
 
+  // Send the frame to the display: only the rows that changed since the last one (a hash per row),
+  // in bands, with short unchanged gaps sent along rather than split.
+  void present(M5GFX& lcd) {
+    const uint32_t* px = (const uint32_t*)c.getBuffer();
+    constexpr int WORDS = SCREEN_W / 4, GAP = 6;
+    int from = -1, last = -1;
+    sentRows = 0;
+    for (int y = 0; y < SCREEN_H; y++) {
+      uint32_t h = 2166136261u;
+      for (int i = 0; i < WORDS; i++) h = (h ^ px[y * WORDS + i]) * 16777619u;
+      if (h == rowHash[y] && !full) continue;
+      rowHash[y] = h;
+      if (from >= 0 && y - last > GAP) band(lcd, from, last);
+      if (from < 0 || y - last > GAP) from = y;
+      last = y;
+    }
+    if (from >= 0) band(lcd, from, last);
+    full = false;
+  }
+
+  void invalidate() { full = true; }
+  int sentRows = 0;  // in the last present() (serial r)  // the display lost what it showed: send all of it next time
+
+  // The frame as RGB565, pixel by pixel (screenshots).
+  uint16_t pixel(int i) const { return pal565[((const uint8_t*)c.getBuffer())[i]]; }
+
   M5Canvas& canvas() { return c; }
 
  private:
   M5Canvas& c;
+  uint16_t pal565[256];
+  int used = 0;
+  uint32_t keys[512] = {};  // color + 1 (0 = empty), open addressing
+  uint8_t vals[512];
+  uint32_t rowHash[SCREEN_H] = {};
+  bool full = true;
+
+  uint8_t idx(uint16_t color) {
+    uint32_t h = (color * 2654435761u) >> 23;  // 9 bits
+    while (keys[h]) {
+      if (keys[h] == color + 1u) return vals[h];
+      h = (h + 1) & 511;
+    }
+    uint8_t v;
+    if (used < 256) {
+      v = used++;
+      pal565[v] = color;
+      c.setPaletteColor(v, color);
+    } else {
+      v = nearest(color);  // all 256 taken (Tock uses a few dozen): the closest one
+    }
+    keys[h] = color + 1u;
+    vals[h] = v;
+    return v;
+  }
+
+  uint8_t nearest(uint16_t color) const {
+    auto ch = [](uint16_t c, int i) { return i == 0 ? (c >> 11) << 1 : i == 1 ? (c >> 5) & 63 : (c & 31) << 1; };
+    int best = 0, bestD = INT32_MAX;
+    for (int i = 0; i < used; i++) {
+      int d = 0;
+      for (int k = 0; k < 3; k++) d += (ch(color, k) - ch(pal565[i], k)) * (ch(color, k) - ch(pal565[i], k));
+      if (d < bestD) bestD = d, best = i;
+    }
+    return best;
+  }
+
+  void band(M5GFX& lcd, int y0, int y1) {
+    sentRows += y1 - y0 + 1;
+    lcd.setClipRect(0, y0, SCREEN_W, y1 - y0 + 1);
+    c.pushSprite(&lcd, 0, 0);
+    lcd.clearClipRect();
+  }
 };
 
 // "M:SS", rounding up so the clock reads 0:00 only at the very end.

@@ -30,7 +30,7 @@ All suffixes share the prefix `7a0c`, then the suffix, then `-4c3f-4d7e-9b6a-70c
 | `tasks:<lines>` | replace the task list: `id\|color\|name` per line, id 0 for a new task |
 | `msgs:<lines>` | replace the screensaver's lines (none = the defaults) |
 | `goal:<hours>`, `goalmin:<minutes>` | today's goal, 15 minutes to 16 hours |
-| `update:<size> <sha256 hex>` | start a firmware update |
+| `update:<size> <sha256 hex> [<deflated size>]` | start a firmware update (deflated: the image comes compressed) |
 | `update:end` | all of it sent: check it and restart into it |
 | `update:cancel` | stop an update; the FIRE keeps its firmware |
 
@@ -46,19 +46,24 @@ TASKSTATS: `u8` version (1), `i32` today, `u8` count, then per task: `u8` id, th
 focused minutes, oldest first. Untagged time is the day's total minus these.
 
 UPDATE, written: `u32` offset, `u32` FNV-1a of the bytes, then the bytes (up to 504), in order.
-The FIRE drops a chunk that isn't at the next offset, or doesn't match its FNV-1a, or doesn't fit
-in its 16 KB buffer yet; the sender reads UPDATE now and then and goes back to `got`.
+Offsets count what's sent: the deflated stream when the update is deflated. The FIRE drops a
+chunk that isn't at the next offset, or doesn't match its FNV-1a, or doesn't fit in its 16 KB
+buffer yet; the sender reads UPDATE now and then and goes back to `got`.
 
-UPDATE, read: `u8` state (0 idle, 1 receiving, 2 checking, 3 installed and restarting, 4 failed),
-`u8` error (1 too big, 2 no memory, 3 wrong size, 4 wrong hash, 5 flash, 6 timed out, 7
-cancelled), `u32` got (bytes received), `u32` size, `u32` written (bytes in flash).
+UPDATE, read: `u8` state (0 idle, 1 receiving, 2 checking, 3 installed and restarting, 4 failed,
+5 getting ready), `u8` error (1 too big, 2 no memory, 3 wrong size, 4 wrong hash, 5 flash, 6
+timed out, 7 cancelled, 8 didn't inflate), `u32` got (bytes received), `u32` size (of what's
+sent), `u32` written (image bytes in flash).
 
 ## Firmware updates
 
-1. `update:<size> <sha256>` on COMMAND. The FIRE shows the update screen and starts writing to
-   its other app partition.
-2. The image in chunks on UPDATE, without waiting for each: at most 12 KB past the last `got`
-   read back, which the FIRE's buffer always has room for.
+1. `update:<size> <sha256> <deflated size>` on COMMAND. The FIRE shows the update screen, makes
+   room (state 5), and is ready for the image when UPDATE reads state 1. The size and SHA-256
+   are the image's; the deflated size is what will come: the image as raw DEFLATE (RFC 1951),
+   about 2/3 of it. Leave it out to send the image as it is.
+2. What's sent, in chunks on UPDATE, without waiting for each: at most 12 KB past the last `got`
+   read back, which the FIRE's buffer always has room for. The FIRE inflates it with the
+   decoder in the ESP32's ROM and writes it to its other app partition as it comes.
 3. `update:end` once `got` is the size. When all of it is in flash, the FIRE checks the SHA-256,
    switches to the new firmware and restarts (state 3).
 4. The new firmware runs on probation: if it crashes or is reset in its first 15 seconds, the

@@ -5,6 +5,7 @@
 // Checked once a day, and from the button in the panel and in Settings > MAC. For testing, point
 // it at another release JSON: defaults write dev.tock.companion tock.releases <url>
 //   Tock.app --update-now   check, wait for the FIRE (a minute at most), and install what's newer
+//   Tock.app --send-firmware <file.bin> <version>   just send that firmware to the FIRE (testing)
 
 import AppKit
 import CryptoKit
@@ -70,6 +71,18 @@ final class Updater: ObservableObject {
   init(link: TockLink, automatic: Bool) {
     self.link = link
     guard automatic else { return }
+    if let i = CommandLine.arguments.firstIndex(of: "--send-firmware"), i + 2 < CommandLine.arguments.count,
+       let image = FileManager.default.contents(atPath: CommandLine.arguments[i + 1]) {
+      let version = CommandLine.arguments[i + 2]
+      Task {
+        for _ in 0..<60 where link.status == nil { try? await Task.sleep(for: .seconds(1)) }
+        try? await Task.sleep(for: .seconds(3))
+        let started = Date()
+        let error = await sendFirmware(image, version: version)
+        print("tock: send firmware: \(error ?? "done") after \(Int(Date().timeIntervalSince(started))) s")
+      }
+      return
+    }
     if CommandLine.arguments.contains("--update-now") {
       Task {
         await check()

@@ -42,6 +42,10 @@ For testing updates: point the app at another release JSON (in the shape of GitH
     open -n /Applications/Tock.app --args --update-now
     defaults delete dev.tock.companion tock.releases
 
+Or send one firmware file straight to the FIRE (it logs the speed):
+
+    open -n /Applications/Tock.app --args --send-firmware firmware/build/tock.ino.bin 0.1.1
+
 ## Pairing
 
 1. On Tock: Settings, switch BLUETOOTH on.

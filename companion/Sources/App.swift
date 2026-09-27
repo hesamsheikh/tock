@@ -909,7 +909,7 @@ struct UpdateBox: View {
       } else if let r = updater.latest, updater.available {
         PixelText(text: "\(r.version) IS OUT", scale: 2, color: p.body)
         if !r.notes.isEmpty { Note(text: UpdateBox.summary(r.notes), p: p) }
-        Note(text: "Updates \(updater.what). The FIRE takes about a minute: keep it close and switched on.", p: p)
+        Note(text: "Updates \(updater.what). The FIRE takes a minute or two: keep it close and switched on.", p: p)
         TextButton(label: "UPDATE", color: p.body, p: p) { Task { await updater.update() } }
       } else {
         TextButton(label: "CHECK FOR UPDATES", color: p.body, p: p) { Task { await updater.check() } }

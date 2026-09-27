@@ -5,11 +5,22 @@ Arduino C++ for the ESP32, in `firmware/tock/`. Built with `arduino-cli` against
 overflow the ESP32's IRAM), M5Unified and M5GFX for the board, NimBLE for Bluetooth, and
 Adafruit NeoPixel for the LEDs.
 
+The frame is an 8-bit canvas (each color gets a palette slot the first time it's drawn) in
+internal RAM, and only the rows that changed go to the display: most frames take a few
+milliseconds, and the loop runs at up to 60 fps. While Talk or an update runs, they need that
+internal RAM, so the frame moves to PSRAM and back after. `flash.sh` also leaves out the parts of
+NimBLE Tock doesn't use (the client and the scanner).
+
+PSRAM runs at 40 MHz, not the core's 80: at 80 the FIRE's PSRAM hands back words shifted by a
+nibble, hundreds a minute, which garbled Talk's audio and messages. `flash.sh` links with
+`--wrap=psram_enable` and `tock.ino` passes the slower mode on; build with `flash.sh` so that's
+in. Serial `P` checks it.
+
 | File | |
 | --- | --- |
 | `tock.ino` | setup, the main loop, button events, serial debug commands |
 | `system.h` | sound, preferences (NVS), LEDs, the clock, the focus log, the app interface |
-| `gfx.h` | the palette (dark and light), the 3 x 5 pixel font, drawing |
+| `gfx.h` | the palette (dark and light), the 3 x 5 pixel font, drawing, sending frames to the display |
 | `sprites.h`, `tock_sprites.h` | Tock's poses |
 | `home.h` | the home screen and the settings sheet every app gets on hold C |
 | `timer.h`, `stats.h`, `talk.h`, `saver.h`, `settings.h` | the apps |
@@ -42,15 +53,16 @@ At 115200 baud (`arduino-cli monitor -p <port> --config 115200`), single keys dr
 | `A` `B` `C` | hold A, B, C |
 | `(` `)` | press / release A (Talk's push-to-talk) |
 | `s` | dump a screenshot (run-length encoded RGB565) |
-| `r` | status: power chip, Wi-Fi, Bluetooth, clock, memory |
+| `r` | status: power chip, Wi-Fi, Bluetooth, clock, memory, and where a frame's time goes |
 | `x` | countdowns at 1x, 10x, 60x |
 | `T<epoch>` + newline | set the clock (UTC seconds) |
 | `W<ssid><tab><password>` + newline | save a Wi-Fi network |
 | `K<id>\|<color>\|<name>;...` + newline | set the task list |
 | `M<line>;<line>;...` + newline | set the screensaver's lines |
-| `w` / `l` | scan for Wi-Fi networks / Bluetooth devices |
+| `w` | scan for Wi-Fi networks |
 | `L` | Bluetooth off and on |
 | `m` / `v` | microphone test / speaker test (silent) |
 | `d` / `D` | fill the focus log with demo history / wipe it |
+| `P` | PSRAM test: 1 MB checked every 5 s for a minute (should stay at 0) |
 
 Opening the port with most serial tools resets the ESP32; `arduino-cli monitor` does not.

@@ -58,7 +58,7 @@ Wi-Fi is only needed for Talk and for setting the clock without the Mac.
 
 Once it's set up, you don't need the cable again. The Mac app checks for a new release once a
 day: when there is one, the menu bar panel says so, and UPDATE brings both up to date. The FIRE
-goes first, over Bluetooth, in about two minutes (keep it close, and switched on); then the app
+goes first, over Bluetooth, in about a minute and a half (keep it close, and switched on); then the app
 restarts as the new version. You can also check yourself in Settings > MAC.
 
 Next: [Using Tock](using-tock.md).

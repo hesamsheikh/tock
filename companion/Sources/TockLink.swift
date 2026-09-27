@@ -471,15 +471,16 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
 
   // MARK: firmware updates (firmware/tock/update.h)
   //
-  // "update:<size> <sha256>" makes room on the FIRE; then the image goes in chunks (u32 offset,
-  // u32 FNV-1a of the bytes, the bytes) without waiting for each, and a read of UPDATE every window says how far the FIRE got:
+  // "update:<size> <sha256> <deflated size>" gets the FIRE ready; then the image, deflated (about
+  // 2/3 of it), goes in chunks (u32 offset, u32 FNV-1a of the bytes, the bytes) without waiting for each, and a read of UPDATE every window says how far the FIRE got:
   // anything it missed is sent again from there. "update:end" has it check and install the image.
 
   private var fwImage = Data()
   private var fwSent = 0, fwGot = 0, fwSentAtRead = 0
   private var fwReading = false, fwAccepted = false
   private var fwTarget = "", fwFrom = ""
-  private var fwStarted = Date(), fwMoved = Date()
+  private var fwStarted = Date(), fwMoved = Date(), fwRateAt = Date()
+  private var fwRateGot = 0, fwResent = 0
   private var fwWatch: Timer?
   private var fwDone: ((String?) -> Void)?
   private static let fwWindow = 12 * 1024  // the FIRE buffers 16 KB on its way to flash
@@ -497,8 +498,13 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
   // Send `image` (firmware `version`) to the FIRE; `done` gets nil once it runs the new one, or why not.
   func updateFirmware(_ image: Data, version: String, done: @escaping (String?) -> Void) {
     if let why = firmwareBlocked { return done(why) }
-    fwImage = image
+    // deflated: the FIRE inflates it as it comes (the ESP32's ROM has the decoder)
+    let packed = (try? (image as NSData).compressed(using: .zlib) as Data) ?? image
+    fwImage = packed
     fwSent = 0
+    fwRateGot = 0
+    fwResent = 0
+    fwRateAt = Date()
     fwGot = 0
     fwReading = false
     fwAccepted = false
@@ -509,8 +515,8 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
     fwDone = done
     firmware = FirmwareProgress(stage: .sending, fraction: 0)
     let hash = SHA256.hash(data: image).map { String(format: "%02x", $0) }.joined()
-    print("tock: firmware \(version), \(image.count) bytes")
-    send("update:\(image.count) \(hash)", done: "")
+    print("tock: firmware \(version), \(image.count) bytes, \(packed.count) deflated")
+    send(packed.count < image.count ? "update:\(image.count) \(hash) \(packed.count)" : "update:\(image.count) \(hash)", done: "")
     fwWatch?.invalidate()
     fwWatch = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.firmwareTick() }
   }
@@ -551,11 +557,16 @@ final class TockLink: NSObject, ObservableObject, CBCentralManagerDelegate, CBPe
       if got != fwGot { fwMoved = Date() }
       fwGot = got
       if got < fwSentAtRead {  // it missed some: again from there
-        print("tock: firmware: the FIRE has \(got), \(fwSentAtRead - got) bytes again")
+        fwResent += fwSentAtRead - got
         fwSent = got
       }
       fwSent = max(fwSent, got)
       firmware = FirmwareProgress(stage: .sending, fraction: Double(got) / Double(fwImage.count))
+      if Date().timeIntervalSince(fwRateAt) >= 2 {
+        print("tock: firmware: \(got / 1024) KB, \((got - fwRateGot) / 1024 / 2) KB/s, \(fwResent / 1024) KB sent again")
+        fwRateAt = Date()
+        fwRateGot = got
+      }
       if got == fwImage.count {
         send("update:end", done: "")
         firmware = FirmwareProgress(stage: .installing, fraction: 0)

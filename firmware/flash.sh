@@ -13,6 +13,8 @@ CLI="${ARDUINO_CLI:-$(command -v arduino-cli || echo "/Applications/Arduino IDE.
 BUILD_ONLY=; FLAGS=
 [ "$1" = "--build-only" ] && BUILD_ONLY=1
 [ "$1" = "--release" ] && BUILD_ONLY=1 && FLAGS=-DTOCK_RELEASE
+# Tock only takes connections: leave out NimBLE's client and scanner (about 30 KB)
+BLE="-DCONFIG_BT_NIMBLE_ROLE_CENTRAL_DISABLED -DCONFIG_BT_NIMBLE_ROLE_OBSERVER_DISABLED"
 if [ -z "$BUILD_ONLY" ]; then
   PORT="${1:-$(ls /dev/cu.usbserial-* 2>/dev/null | head -1)}"
   [ -n "$PORT" ] || { echo "No /dev/cu.usbserial-* port found. Is the FIRE plugged in?" >&2; exit 1; }
@@ -34,7 +36,9 @@ if [ -f ../lab/tock.js ] && command -v node >/dev/null; then node gen-sprites.js
   --build-property "tools.ctags.pattern=/usr/bin/true" \
   --build-property "tools.esptool_py.path=$(dirname "$ESPTOOL")" \
   --build-property "tools.esptool_py.cmd=$(basename "$ESPTOOL")" \
-  --build-property "compiler.cpp.extra_flags=$FLAGS" \
+  --build-property "compiler.cpp.extra_flags=$FLAGS $BLE" \
+  --build-property "compiler.c.extra_flags=$BLE" \
+  --build-property "compiler.c.elf.extra_flags=-Wl,--wrap=psram_enable" \
   --output-dir build tock
 [ -n "$BUILD_ONLY" ] && exit 0
 
