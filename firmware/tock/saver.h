@@ -1,4 +1,4 @@
-// saver.h: the screensaver. Mirrors simulator/src/apps/saver.
+// saver.h: the screensaver.
 //   A  previous line     B  next background (PLASMA, WARP, RAIN)     C  next line
 //   hold C: settings (background, how long each line stays: 1 minute or more)
 // A quiet screen: no sound at all. WARP and RAIN stay dim; PLASMA fills the screen with Tock's colors.

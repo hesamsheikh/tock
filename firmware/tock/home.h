@@ -1,5 +1,5 @@
 // home.h: the launcher (a phone-style icon grid) and the settings sheet any screen gets on
-// hold-C. Mirrors simulator/src/os/launcher.ts and settings-sheet.ts.
+// hold-C.
 
 #pragma once
 #include "net.h"

@@ -1,4 +1,4 @@
-// timer.h: the Timer app. Mirrors simulator/src/apps/timer (model, config, styles, break, index).
+// timer.h: the Timer app.
 //   A  next task (pet Tock if there are no tasks)     hold A: reset
 //   B  start / pause / resume
 //   C  between countdowns: next time; during one: pet Tock

@@ -1,5 +1,4 @@
 // tasks.h: the user's own lists, made in the Mac app and sent over Bluetooth (net.h).
-// Mirrors simulator/src/os/tasks.ts.
 //   Tasks     groups to file focus time under (STUDY, WORK, ...), each with a color. Optional:
 //             time without a task is simply untagged. Up to 8, ids 1-8 (0 = no task).
 //             Stored as lines "id|color|name" in NVS "tasks"; the current one in "task.cur".

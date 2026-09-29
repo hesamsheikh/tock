@@ -1,4 +1,4 @@
-// settings.h: the Settings app. Mirrors simulator/src/apps/settings.
+// settings.h: the Settings app.
 //   A  up     B  change (DONE: back home)     C  down
 // THEME dark / light, SOUND off or 1-5 (every beep; a sample plays as it changes), WI-FI and
 // BLUETOOTH on / off,

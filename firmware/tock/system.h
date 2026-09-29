@@ -1,4 +1,4 @@
-// system.h: what every screen can use. Mirrors simulator/src/device and src/os/focus-log.ts.
+// system.h: what every screen can use.
 //   Sound   M5.Speaker beeps, with a small queue for melodies, silenced for quiet screens
 //   Prefs   small saved numbers (NVS)
 //   Leds    the M5GO base's 10 SK6812 LEDs

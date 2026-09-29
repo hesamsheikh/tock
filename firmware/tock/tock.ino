@@ -1,5 +1,4 @@
-// Tock: a desk companion for the M5Stack FIRE. The firmware twin of simulator/ (the React
-// simulator is where screens are designed; this file and its headers follow it).
+// Tock: a desk companion for the M5Stack FIRE.
 //
 //   A / B / C    the three front buttons. Tap, or hold for 0.6 s.
 //   hold B       home, from anywhere

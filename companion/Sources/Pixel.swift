@@ -9,7 +9,7 @@ extension Color {
   }
 }
 
-// The same palette as simulator/src/device/palette.ts and firmware/tock/gfx.h.
+// The same palette as firmware/tock/gfx.h.
 struct Palette {
   let bg, panel, ink, grey, body, faint, umber, dim, amber, red: Color
 
@@ -35,7 +35,7 @@ struct Palette {
                    red: base.red)
   }
 
-  // Task colors, the same in both themes (firmware/tock/tasks.h, simulator/src/os/tasks.ts).
+  // Task colors, the same in both themes (firmware/tock/tasks.h).
   // Mustard stays for untagged time.
   static let taskColors: [(name: String, color: Color)] = [
     ("Coral", Color(hex: 0xe9785b)), ("Teal", Color(hex: 0x3fb8a8)), ("Sage", Color(hex: 0x9bbf6a)),
@@ -114,7 +114,7 @@ struct PixelText: View {
 enum TockPose {
   case stand, blink, cheer, sit, talk, tick, tock  // tick / tock: focusing, the knob swaying each second
 
-  // Same grids as lab/tock.js: '#' body, anything else empty.
+  // Same grids as firmware/tock/tock_sprites.h: '#' body, anything else empty.
   var rows: [String] {
     let top = [".....####.....", "...########...", "..##########..", "..##########..", "..##########.."]
     let eyes = ["..##o####o##..", "..##o####o##.."], closed = ["..##########..", "..##########.."]

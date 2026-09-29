@@ -1,5 +1,5 @@
-// gfx.h: drawing on the 320 x 240 frame. Mirrors simulator/src/device/gfx.ts and font.ts:
-// everything is integer rectangles, plus a 3 x 5 pixel font and '#'-grid sprites.
+// gfx.h: drawing on the 320 x 240 frame: everything is integer rectangles, plus a 3 x 5 pixel
+// font and '#'-grid sprites.
 
 #pragma once
 #include <M5Unified.h>
@@ -10,9 +10,8 @@ constexpr uint16_t rgb565(uint32_t rgb) {
   return ((rgb >> 8) & 0xf800) | ((rgb >> 5) & 0x07e0) | ((rgb >> 3) & 0x001f);
 }
 
-// The palette (simulator/src/device/palette.ts), in two themes. pal:: holds the current one;
-// applyTheme swaps it, and everything drawn after that follows. The screensaver ignores the
-// theme and always uses dark::.
+// The palette, in two themes. pal:: holds the current one; applyTheme swaps it, and everything
+// drawn after that follows. The screensaver ignores the theme and always uses dark::.
 //   bg the screen, ink text, body Tock's mustard, grey quieter text, faint empty slots, red alerts;
 //   umber, dim, amber: steps from faint to body
 struct Palette {

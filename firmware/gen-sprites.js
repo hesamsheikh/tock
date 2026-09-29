@@ -1,4 +1,5 @@
-// Regenerates firmware/tock/tock_sprites.h from the canonical poses in ../lab/tock.js.
+// Regenerates firmware/tock/tock_sprites.h from Tock's poses, drawn in a sketchbook that isn't in
+// the repo (lab/tock.js, which git ignores). tock_sprites.h is checked in: builds don't need this.
 // Run: node firmware/gen-sprites.js
 const fs = require('fs');
 const path = require('path');

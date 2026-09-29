@@ -497,7 +497,7 @@ class TalkLink {
 };
 
 // ---------- the orb ----------
-// A pixel blob in Tock's mustard. Same drawing as simulator/src/apps/talk/orb.ts.
+// A pixel blob in Tock's mustard.
 
 enum OrbMood { ORB_CONNECTING, ORB_PAUSED, ORB_LISTENING, ORB_THINKING, ORB_SPEAKING, ORB_ERROR };
 

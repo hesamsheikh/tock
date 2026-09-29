@@ -1,4 +1,4 @@
-// stats.h: the Stats app. Mirrors simulator/src/apps/stats.
+// stats.h: the Stats app.
 //   A  day before     B  next view (DAY, WEEK, TASKS, HEATMAP)     C  day after
 //   hold C: settings (daily goal)
 // TASKS (that week per task) only shows once there are tasks; with tasks, the day and week bars

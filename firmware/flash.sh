@@ -30,7 +30,8 @@ if [ -z "$ESPTOOL" ]; then
 fi
 [ -n "$ESPTOOL" ] || { echo "Need a native esptool: pip install esptool (or brew install esptool)" >&2; exit 1; }
 
-# the sprite header is checked in; it is only regenerated where the pose sources (lab/) exist
+# the sprite header is checked in; it is only regenerated where Tock's pose sketches (lab/, which
+# git ignores) exist
 if [ -f ../lab/tock.js ] && command -v node >/dev/null; then node gen-sprites.js; fi
 "$CLI" compile --profile fire \
   --build-property "tools.ctags.pattern=/usr/bin/true" \

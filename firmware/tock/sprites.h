@@ -1,5 +1,4 @@
-// sprites.h: drawing Tock. Mirrors simulator/src/sprites/tock.ts; the poses come from
-// tock_sprites.h, generated from lab/tock.js.
+// sprites.h: drawing Tock, in the poses from tock_sprites.h.
 
 #pragma once
 #include "gfx.h"
