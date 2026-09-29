@@ -2,7 +2,9 @@
   <img src="docs/images/banner.png" alt="Tock on an M5Stack FIRE: the Arcade timer, with Tock walking toward a cup of coffee" width="100%">
 </p>
 
-<h1 align="center">Tock</h1>
+<div id="toc" align="center">
+  <ul><summary><h1>Tock</h1></summary></ul>
+</div>
 <p align="center">A simple pet project of how I'd like to focus.</p>
 
 Tock is a desk pet and focus timer for the [M5Stack FIRE](https://docs.m5stack.com/en/core/fire).
@@ -17,6 +19,10 @@ your focus time, has a coffee on your breaks, and cheers when you reach your dai
 
 The FIRE works on its own; the Mac app pairs over Bluetooth for setup (tasks, Wi-Fi, the API key)
 and for the menu bar.
+
+> [!NOTE]
+> Tock is a pre-release project, so be kind and patient with it. Things may break or change
+> between versions; if something does, [open an issue](https://github.com/hesamsheikh/tock/issues).
 
 ## Install
 
