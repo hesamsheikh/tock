@@ -10,11 +10,15 @@ set -e
 cd "$(dirname "$0")"
 
 CLI="${ARDUINO_CLI:-$(command -v arduino-cli || echo "/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli")}"
-BUILD_ONLY=; FLAGS=
+BUILD_ONLY=; FLAGS=; CLEAN=
 [ "$1" = "--build-only" ] && BUILD_ONLY=1
-[ "$1" = "--release" ] && BUILD_ONLY=1 && FLAGS=-DTOCK_RELEASE
+# a release compiles everything afresh: a cached core keeps the flags (and paths) it was built with
+[ "$1" = "--release" ] && BUILD_ONLY=1 && FLAGS=-DTOCK_RELEASE && CLEAN=--clean
 # Tock only takes connections: leave out NimBLE's client and scanner (about 30 KB)
 BLE="-DCONFIG_BT_NIMBLE_ROLE_CENTRAL_DISABLED -DCONFIG_BT_NIMBLE_ROLE_OBSERVER_DISABLED"
+# the core and libraries put their source paths in the firmware (assert messages): name them
+# from ~, so the home folder (and your user name) stays out of it
+MAP="-ffile-prefix-map=$HOME=~"
 if [ -z "$BUILD_ONLY" ]; then
   PORT="${1:-$(ls /dev/cu.usbserial-* 2>/dev/null | head -1)}"
   [ -n "$PORT" ] || { echo "No /dev/cu.usbserial-* port found. Is the FIRE plugged in?" >&2; exit 1; }
@@ -33,12 +37,12 @@ fi
 # the sprite header is checked in; it is only regenerated where Tock's pose sketches (lab/, which
 # git ignores) exist
 if [ -f ../lab/tock.js ] && command -v node >/dev/null; then node gen-sprites.js; fi
-"$CLI" compile --profile fire \
+"$CLI" compile --profile fire $CLEAN \
   --build-property "tools.ctags.pattern=/usr/bin/true" \
   --build-property "tools.esptool_py.path=$(dirname "$ESPTOOL")" \
   --build-property "tools.esptool_py.cmd=$(basename "$ESPTOOL")" \
-  --build-property "compiler.cpp.extra_flags=$FLAGS $BLE" \
-  --build-property "compiler.c.extra_flags=$BLE" \
+  --build-property "compiler.cpp.extra_flags=$FLAGS $BLE $MAP" \
+  --build-property "compiler.c.extra_flags=$BLE $MAP" \
   --build-property "compiler.c.elf.extra_flags=-Wl,--wrap=psram_enable" \
   --output-dir build tock
 [ -n "$BUILD_ONLY" ] && exit 0
