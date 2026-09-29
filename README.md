@@ -50,7 +50,7 @@ the API key for Talk.
     firmware/    the FIRE's firmware (Arduino, ESP32) and its build scripts
     companion/   the Mac menu bar app (SwiftUI, built without Xcode)
     docs/        these docs
-    release.sh   publishes a release (docs/releasing.md)
+    .github/     the release workflow (docs/releasing.md)
 
 ## License
 

@@ -37,7 +37,7 @@ in. Serial `P` checks it.
 
     firmware/flash.sh [serial-port]
     firmware/flash.sh --build-only     # just build, into firmware/build/
-    firmware/flash.sh --release        # the same, without secrets.h (release.sh uses this)
+    firmware/flash.sh --release        # the same, without secrets.h (the release workflow uses this)
 
 See [Getting started](getting-started.md) for what it needs. `ARDUINO_CLI` overrides where the
 script looks for `arduino-cli`.

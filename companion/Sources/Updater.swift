@@ -1,6 +1,7 @@
-// Updates, from the repo's latest GitHub release. release.sh makes those, from main only, with
-// three files: Tock.zip (this app), tock-fire.bin (the FIRE's firmware) and SHA256SUMS. The FIRE
-// goes first, over Bluetooth (TockLink); then the app replaces itself and starts again.
+// Updates, from the repo's latest GitHub release. The release workflow (.github/workflows) makes
+// those, from main only, with three files: Tock.zip (this app), tock-fire.bin (the FIRE's
+// firmware) and SHA256SUMS. The FIRE goes first, over Bluetooth (TockLink); then the app replaces
+// itself and starts again.
 //
 // Checked once a day, and from the button in the panel and in Settings > MAC. For testing, point
 // it at another release JSON: defaults write dev.tock.companion tock.releases <url>
@@ -143,7 +144,7 @@ final class Updater: ObservableObject {
       }
       guard code == 200 else { throw Failure("GitHub answered \(code).") }
       let r = try JSONDecoder().decode(GitHubRelease.self, from: data)
-      // only proper releases cut from main (release.sh); never drafts, pre-releases or other branches
+      // only proper releases cut from main (the release workflow); never drafts, pre-releases or other branches
       guard !r.draft, !r.prerelease, r.target_commitish == "main", let v = Version(r.tag_name) else {
         latest = nil
         checkedAt = Date()
