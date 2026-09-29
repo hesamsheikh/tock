@@ -44,6 +44,7 @@ the API key for Talk.
 - [Releasing](docs/releasing.md): versions, and the updates the Mac app installs
 - [Bluetooth protocol](docs/bluetooth.md): the service the Mac app talks to
 - [Mac app](companion/README.md)
+- [Contributing](CONTRIBUTING.md): working on Tock, and what a pull request needs
 
 ## Layout
 

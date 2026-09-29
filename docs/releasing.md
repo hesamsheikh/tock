@@ -8,8 +8,8 @@ from `main`. GitHub Actions builds and publishes them
 1. Pick the version and set it in both places:
    - `firmware/tock/system.h`: `#define TOCK_VERSION "0.2.0"`
    - `companion/Info.plist`: `CFBundleShortVersionString`
-2. Add a `## 0.2.0 (date)` section to `CHANGELOG.md`: it becomes the release notes, and the
-   first lines show in the app.
+2. In `CHANGELOG.md`, rename `## Unreleased` to `## 0.2.0 (date)` (or add that section): it
+   becomes the release notes, and the first lines show in the app.
 3. Commit on `main` and push.
 4. Tag that commit and push the tag:
 
